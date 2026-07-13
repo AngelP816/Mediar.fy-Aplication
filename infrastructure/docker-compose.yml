@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: mediarfy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mediarfy
+      POSTGRES_PASSWORD: mediarfy_dev_password
+      POSTGRES_DB: mediarfy_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - mediarfy_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  mediarfy_postgres_data:

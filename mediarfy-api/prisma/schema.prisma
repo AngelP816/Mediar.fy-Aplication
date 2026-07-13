@@ -1,0 +1,266 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CLIENT
+  MEDIATOR
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum MediationRequestStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum MediationType {
+  LEASE
+  PURCHASE_SALE
+  PROPERTY_DELIVERY
+  CONTRACT_BREACH
+  NEIGHBOR_CONFLICT
+  OTHER
+}
+
+enum UrgencyLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CaseStatus {
+  OPEN
+  INFORMATION_PENDING
+  SESSION_SCHEDULED
+  IN_MEDIATION
+  AGREEMENT_DRAFTING
+  AWAITING_SIGNATURES
+  SIGNED
+  REGISTRATION_PENDING
+  CLOSED_SUCCESS
+  CLOSED_NO_AGREEMENT
+  CANCELLED
+}
+
+enum CaseParticipantRole {
+  REQUESTING_PARTY
+  INVITED_PARTY
+  MEDIATOR
+  OBSERVER
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  role         Role       @default(CLIENT)
+  status       UserStatus @default(ACTIVE)
+
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+
+  refreshTokens RefreshToken[]
+
+  clientRequests       MediationRequest[]     @relation("ClientRequests")
+  assignedRequests     MediationRequest[]     @relation("MediatorRequests")
+  requestStatusChanges RequestStatusHistory[] @relation("RequestStatusChanges")
+
+  clientCases       MediationCase[]     @relation("ClientCases")
+  mediatorCases     MediationCase[]     @relation("MediatorCases")
+  caseParticipants  CaseParticipant[]
+  caseStatusChanges CaseStatusHistory[] @relation("CaseStatusChanges")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model MediationRequest {
+  id          String                 @id @default(uuid())
+  folio       String                 @unique
+  title       String
+  description String
+  type        MediationType
+  urgency     UrgencyLevel           @default(MEDIUM)
+  status      MediationRequestStatus @default(DRAFT)
+
+  clientId           String
+  assignedMediatorId String?
+
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  decisionAt  DateTime?
+
+  rejectionReason String?
+
+  case MediationCase?
+
+  client User @relation("ClientRequests", fields: [clientId], references: [id], onDelete: Restrict)
+
+  assignedMediator User? @relation("MediatorRequests", fields: [assignedMediatorId], references: [id], onDelete: SetNull)
+
+  statusHistory RequestStatusHistory[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([clientId])
+  @@index([assignedMediatorId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("mediation_requests")
+}
+
+model RequestStatusHistory {
+  id String @id @default(uuid())
+
+  requestId   String
+  changedById String
+
+  fromStatus MediationRequestStatus?
+  toStatus   MediationRequestStatus
+
+  comment String?
+
+  request MediationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  changedBy User @relation("RequestStatusChanges", fields: [changedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@index([requestId])
+  @@index([changedById])
+  @@index([createdAt])
+  @@map("request_status_history")
+}
+
+model MediationCase {
+  id          String     @id @default(uuid())
+  folio       String     @unique
+  title       String
+  description String
+  status      CaseStatus @default(OPEN)
+
+  requestId  String @unique
+  clientId   String
+  mediatorId String
+
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
+
+  request MediationRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+
+  client User @relation("ClientCases", fields: [clientId], references: [id], onDelete: Restrict)
+
+  mediator User @relation("MediatorCases", fields: [mediatorId], references: [id], onDelete: Restrict)
+
+  participants  CaseParticipant[]
+  statusHistory CaseStatusHistory[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([clientId])
+  @@index([mediatorId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("mediation_cases")
+}
+
+model CaseParticipant {
+  id String @id @default(uuid())
+
+  caseId String
+  userId String?
+
+  role CaseParticipantRole
+
+  firstName String
+  lastName  String
+  email     String?
+  phone     String?
+
+  invitedAt  DateTime?
+  acceptedAt DateTime?
+
+  mediationCase MediationCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([caseId])
+  @@index([userId])
+  @@map("case_participants")
+}
+
+model CaseStatusHistory {
+  id String @id @default(uuid())
+
+  caseId      String
+  changedById String
+
+  fromStatus CaseStatus?
+  toStatus   CaseStatus
+
+  comment String?
+
+  mediationCase MediationCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  changedBy User @relation("CaseStatusChanges", fields: [changedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@index([caseId])
+  @@index([changedById])
+  @@index([createdAt])
+  @@map("case_status_history")
+}

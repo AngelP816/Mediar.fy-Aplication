@@ -1,0 +1,48 @@
+# Dependencias
+**/node_modules/
+
+# Variables de entorno y secretos
+**/.env
+**/.env.*
+!**/.env.example
+
+# Compilación
+**/dist/
+**/build/
+**/coverage/
+**/*.tsbuildinfo
+
+# Prisma generado
+**/src/generated/prisma/
+**/generated/prisma/
+
+# Expo
+**/.expo/
+**/.expo-shared/
+**/web-build/
+**/.metro-health-check*
+**/expo-env.d.ts
+
+# Android e iOS generados por Expo
+**/android/
+**/ios/
+
+# Logs
+**/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+
+# OneDrive y temporales
+*.tmp
+*.temp
+~$*
