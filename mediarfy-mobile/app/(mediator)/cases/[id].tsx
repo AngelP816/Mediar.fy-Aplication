@@ -1,10 +1,13 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -29,7 +32,129 @@ const statusLabels: Record<CaseStatus, string> = {
   CANCELLED: 'Cancelado',
 };
 
-export default function ClientCaseDetailScreen() {
+interface CaseAction {
+  label: string;
+  nextStatus: CaseStatus;
+  destructive?: boolean;
+}
+
+const actionsByStatus: Record<
+  CaseStatus,
+  CaseAction[]
+> = {
+  OPEN: [
+    {
+      label: 'Solicitar información',
+      nextStatus: 'INFORMATION_PENDING',
+    },
+    {
+      label: 'Programar sesión',
+      nextStatus: 'SESSION_SCHEDULED',
+    },
+    {
+      label: 'Cancelar caso',
+      nextStatus: 'CANCELLED',
+      destructive: true,
+    },
+  ],
+
+  INFORMATION_PENDING: [
+    {
+      label: 'Programar sesión',
+      nextStatus: 'SESSION_SCHEDULED',
+    },
+    {
+      label: 'Cancelar caso',
+      nextStatus: 'CANCELLED',
+      destructive: true,
+    },
+  ],
+
+  SESSION_SCHEDULED: [
+    {
+      label: 'Iniciar mediación',
+      nextStatus: 'IN_MEDIATION',
+    },
+    {
+      label: 'Solicitar más información',
+      nextStatus: 'INFORMATION_PENDING',
+    },
+    {
+      label: 'Cancelar caso',
+      nextStatus: 'CANCELLED',
+      destructive: true,
+    },
+  ],
+
+  IN_MEDIATION: [
+    {
+      label: 'Redactar convenio',
+      nextStatus: 'AGREEMENT_DRAFTING',
+    },
+    {
+      label: 'Cerrar sin acuerdo',
+      nextStatus: 'CLOSED_NO_AGREEMENT',
+      destructive: true,
+    },
+    {
+      label: 'Cancelar caso',
+      nextStatus: 'CANCELLED',
+      destructive: true,
+    },
+  ],
+
+  AGREEMENT_DRAFTING: [
+    {
+      label: 'Enviar a firmas',
+      nextStatus: 'AWAITING_SIGNATURES',
+    },
+    {
+      label: 'Regresar a mediación',
+      nextStatus: 'IN_MEDIATION',
+    },
+    {
+      label: 'Cerrar sin acuerdo',
+      nextStatus: 'CLOSED_NO_AGREEMENT',
+      destructive: true,
+    },
+  ],
+
+  AWAITING_SIGNATURES: [
+    {
+      label: 'Marcar como firmado',
+      nextStatus: 'SIGNED',
+    },
+    {
+      label: 'Regresar a redacción',
+      nextStatus: 'AGREEMENT_DRAFTING',
+    },
+    {
+      label: 'Cerrar sin acuerdo',
+      nextStatus: 'CLOSED_NO_AGREEMENT',
+      destructive: true,
+    },
+  ],
+
+  SIGNED: [
+    {
+      label: 'Enviar a registro',
+      nextStatus: 'REGISTRATION_PENDING',
+    },
+  ],
+
+  REGISTRATION_PENDING: [
+    {
+      label: 'Cerrar con acuerdo',
+      nextStatus: 'CLOSED_SUCCESS',
+    },
+  ],
+
+  CLOSED_SUCCESS: [],
+  CLOSED_NO_AGREEMENT: [],
+  CANCELLED: [],
+};
+
+export default function MediatorCaseDetailScreen() {
   const params = useLocalSearchParams<{
     id?: string | string[];
   }>();
@@ -41,9 +166,75 @@ export default function ClientCaseDetailScreen() {
   const [mediationCase, setMediationCase] =
     useState<MediationCaseDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(
-    null,
-  );
+  const [error, setError] = useState<string | null>(null,);
+
+  const [selectedAction, setSelectedAction] =
+    useState<CaseAction | null>(null);
+
+  const [comment, setComment] = useState('');
+
+  const [isUpdating, setIsUpdating] =
+    useState(false);
+
+  const availableActions = useMemo(() => {
+    if (!mediationCase) {
+      return [];
+    }
+
+    return actionsByStatus[mediationCase.status];
+  }, [mediationCase]);
+
+  const handleUpdateStatus = async () => {
+    if (
+      !caseId ||
+      !selectedAction ||
+      !mediationCase
+    ) {
+      return;
+    }
+
+    try {
+      setIsUpdating(true);
+
+      const updatedCase =
+        await casesService.updateStatus(
+          caseId,
+          {
+            status: selectedAction.nextStatus,
+            comment: comment.trim() || undefined,
+          },
+        );
+
+      setMediationCase(updatedCase);
+      setSelectedAction(null);
+      setComment('');
+
+      Alert.alert(
+        'Estado actualizado',
+        `El caso ahora se encuentra en: ${statusLabels[updatedCase.status]
+        }`,
+      );
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const apiMessage =
+          error.response?.data?.message;
+
+        Alert.alert(
+          'No fue posible actualizar',
+          typeof apiMessage === 'string'
+            ? apiMessage
+            : 'Ocurrió un error al actualizar el caso',
+        );
+      } else {
+        Alert.alert(
+          'No fue posible actualizar',
+          'Ocurrió un error inesperado',
+        );
+      }
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const loadCase = useCallback(async () => {
     if (!caseId) {
@@ -211,6 +402,138 @@ export default function ClientCaseDetailScreen() {
           ),
         )}
       </Section>
+
+      {availableActions.length > 0 ? (
+        <Section title="Acciones del caso">
+          <Text style={styles.actionHelp}>
+            Selecciona la siguiente etapa del expediente.
+          </Text>
+
+          {availableActions.map((action) => (
+            <Pressable
+              key={action.nextStatus}
+              style={[
+                styles.actionButton,
+                action.destructive &&
+                styles.destructiveButton,
+              ]}
+              onPress={() => {
+                setSelectedAction(action);
+                setComment('');
+              }}
+            >
+              <Text
+                style={[
+                  styles.actionButtonText,
+                  action.destructive &&
+                  styles.destructiveButtonText,
+                ]}
+              >
+                {action.label}
+              </Text>
+            </Pressable>
+          ))}
+        </Section>
+      ) : (
+        <Section title="Estado del caso">
+          <Text style={styles.finishedText}>
+            Este expediente se encuentra en un estado
+            final y ya no admite cambios.
+          </Text>
+        </Section>
+      )}
+
+      <Modal
+        visible={selectedAction !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isUpdating) {
+            setSelectedAction(null);
+            setComment('');
+          }
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>
+              Actualizar estado
+            </Text>
+
+            <Text style={styles.modalDescription}>
+              El caso cambiará de{' '}
+              <Text style={styles.boldText}>
+                {mediationCase
+                  ? statusLabels[mediationCase.status]
+                  : ''}
+              </Text>{' '}
+              a{' '}
+              <Text style={styles.boldText}>
+                {selectedAction
+                  ? statusLabels[
+                  selectedAction.nextStatus
+                  ]
+                  : ''}
+              </Text>
+              .
+            </Text>
+
+            <Text style={styles.inputLabel}>
+              Comentario
+            </Text>
+
+            <TextInput
+              value={comment}
+              onChangeText={setComment}
+              placeholder="Describe el motivo o detalle del cambio"
+              multiline
+              maxLength={500}
+              editable={!isUpdating}
+              style={styles.commentInput}
+              textAlignVertical="top"
+            />
+
+            <Text style={styles.characterCount}>
+              {comment.length}/500
+            </Text>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                disabled={isUpdating}
+                style={styles.cancelButton}
+                onPress={() => {
+                  setSelectedAction(null);
+                  setComment('');
+                }}
+              >
+                <Text style={styles.cancelButtonText}>
+                  Cancelar
+                </Text>
+              </Pressable>
+
+              <Pressable
+                disabled={isUpdating}
+                style={[
+                  styles.confirmButton,
+                  isUpdating &&
+                  styles.disabledButton,
+                ]}
+                onPress={() =>
+                  void handleUpdateStatus()
+                }
+              >
+                {isUpdating ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.confirmButtonText}>
+                    Confirmar
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Section title="Historial del caso">
         {mediationCase.statusHistory.map(
@@ -413,5 +736,130 @@ const styles = StyleSheet.create({
   retryButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+  actionHelp: {
+    marginBottom: 14,
+    color: '#718096',
+    lineHeight: 20,
+  },
+
+  actionButton: {
+    alignItems: 'center',
+    marginBottom: 10,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#1A365D',
+  },
+
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  destructiveButton: {
+    borderWidth: 1,
+    borderColor: '#C53030',
+    backgroundColor: '#FFFFFF',
+  },
+
+  destructiveButtonText: {
+    color: '#C53030',
+  },
+
+  finishedText: {
+    color: '#718096',
+    lineHeight: 21,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
+
+  modalContainer: {
+    padding: 20,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+  },
+
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#1A202C',
+  },
+
+  modalDescription: {
+    marginTop: 10,
+    color: '#4A5568',
+    lineHeight: 21,
+  },
+
+  boldText: {
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  inputLabel: {
+    marginTop: 18,
+    marginBottom: 7,
+    fontWeight: '600',
+    color: '#2D3748',
+  },
+
+  commentInput: {
+    minHeight: 110,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E0',
+    borderRadius: 10,
+    backgroundColor: '#F7FAFC',
+    color: '#1A202C',
+  },
+
+  characterCount: {
+    marginTop: 5,
+    textAlign: 'right',
+    fontSize: 12,
+    color: '#A0AEC0',
+  },
+
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 20,
+    gap: 10,
+  },
+
+  cancelButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 9,
+    backgroundColor: '#EDF2F7',
+  },
+
+  cancelButtonText: {
+    color: '#4A5568',
+    fontWeight: '700',
+  },
+
+  confirmButton: {
+    minWidth: 110,
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 9,
+    backgroundColor: '#1A365D',
+  },
+
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  disabledButton: {
+    opacity: 0.6,
   },
 });

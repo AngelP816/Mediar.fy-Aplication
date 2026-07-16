@@ -93,3 +93,7 @@ export interface MediationCaseDetail extends MediationCase {
   participants: CaseParticipant[];
   statusHistory: CaseStatusHistoryItem[];
 }
+export interface UpdateCaseStatusData {
+  status: CaseStatus;
+  comment?: string;
+}

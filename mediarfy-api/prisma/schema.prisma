@@ -71,6 +71,21 @@ enum CaseParticipantRole {
   OBSERVER
 }
 
+enum SessionModality {
+  IN_PERSON
+  VIRTUAL
+  HYBRID
+}
+
+enum SessionStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  RESCHEDULED
+}
+
 model User {
   id           String     @id @default(uuid())
   email        String     @unique
@@ -89,6 +104,7 @@ model User {
   clientRequests       MediationRequest[]     @relation("ClientRequests")
   assignedRequests     MediationRequest[]     @relation("MediatorRequests")
   requestStatusChanges RequestStatusHistory[] @relation("RequestStatusChanges")
+  scheduledSessions    MediationSession[]     @relation("SessionCreatedBy")
 
   clientCases       MediationCase[]     @relation("ClientCases")
   mediatorCases     MediationCase[]     @relation("MediatorCases")
@@ -202,6 +218,7 @@ model MediationCase {
 
   participants  CaseParticipant[]
   statusHistory CaseStatusHistory[]
+  sessions      MediationSession[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -263,4 +280,39 @@ model CaseStatusHistory {
   @@index([changedById])
   @@index([createdAt])
   @@map("case_status_history")
+}
+
+model MediationSession {
+  id String @id @default(uuid())
+
+  caseId      String
+  createdById String
+
+  title       String
+  description String?
+
+  scheduledAt     DateTime
+  durationMinutes Int      @default(60)
+
+  modality SessionModality
+  status   SessionStatus   @default(SCHEDULED)
+
+  location   String?
+  meetingUrl String?
+
+  notes String?
+
+  mediationCase MediationCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  createdBy User @relation("SessionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  cancelledAt DateTime?
+
+  @@index([caseId])
+  @@index([createdById])
+  @@index([scheduledAt])
+  @@index([status])
+  @@map("mediation_sessions")
 }

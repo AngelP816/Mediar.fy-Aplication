@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -11,17 +12,63 @@ import {
 } from '../generated/prisma/enums';
 import { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpdateCaseStatusDto } from './dto/update-case-status.dto';
 
 @Injectable()
 export class CasesService {
+  private readonly allowedTransitions: Record<CaseStatus, CaseStatus[]> = {
+    [CaseStatus.OPEN]: [
+      CaseStatus.INFORMATION_PENDING,
+      CaseStatus.SESSION_SCHEDULED,
+      CaseStatus.CANCELLED,
+    ],
+
+    [CaseStatus.INFORMATION_PENDING]: [
+      CaseStatus.SESSION_SCHEDULED,
+      CaseStatus.CANCELLED,
+    ],
+
+    [CaseStatus.SESSION_SCHEDULED]: [
+      CaseStatus.IN_MEDIATION,
+      CaseStatus.INFORMATION_PENDING,
+      CaseStatus.CANCELLED,
+    ],
+
+    [CaseStatus.IN_MEDIATION]: [
+      CaseStatus.AGREEMENT_DRAFTING,
+      CaseStatus.CLOSED_NO_AGREEMENT,
+      CaseStatus.CANCELLED,
+    ],
+
+    [CaseStatus.AGREEMENT_DRAFTING]: [
+      CaseStatus.AWAITING_SIGNATURES,
+      CaseStatus.IN_MEDIATION,
+      CaseStatus.CLOSED_NO_AGREEMENT,
+    ],
+
+    [CaseStatus.AWAITING_SIGNATURES]: [
+      CaseStatus.SIGNED,
+      CaseStatus.AGREEMENT_DRAFTING,
+      CaseStatus.CLOSED_NO_AGREEMENT,
+    ],
+
+    [CaseStatus.SIGNED]: [CaseStatus.REGISTRATION_PENDING],
+
+    [CaseStatus.REGISTRATION_PENDING]: [CaseStatus.CLOSED_SUCCESS],
+
+    [CaseStatus.CLOSED_SUCCESS]: [],
+
+    [CaseStatus.CLOSED_NO_AGREEMENT]: [],
+
+    [CaseStatus.CANCELLED]: [],
+  };
+
   constructor(private readonly prisma: PrismaService) {}
 
   generateFolio(): string {
     const year = new Date().getFullYear();
 
-    const randomPart = randomBytes(4)
-      .toString('hex')
-      .toUpperCase();
+    const randomPart = randomBytes(4).toString('hex').toUpperCase();
 
     return `CAS-${year}-${randomPart}`;
   }
@@ -76,15 +123,179 @@ export class CasesService {
     });
   }
 
-  async findOne(
+  async findOne(caseId: string, currentUser: AuthenticatedUser) {
+    const mediationCase = await this.prisma.mediationCase.findFirst({
+      where: {
+        id: caseId,
+        deletedAt: null,
+      },
+      include: {
+        request: {
+          select: {
+            id: true,
+            folio: true,
+            type: true,
+            urgency: true,
+          },
+        },
+        client: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+        mediator: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+        participants: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+        statusHistory: {
+          include: {
+            changedBy: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+              },
+            },
+          },
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+      },
+    });
+
+    if (!mediationCase) {
+      throw new NotFoundException('Caso de mediación no encontrado');
+    }
+
+    const isClient = mediationCase.clientId === currentUser.userId;
+
+    const isMediator = mediationCase.mediatorId === currentUser.userId;
+
+    const isParticipant = mediationCase.participants.some(
+      (participant) => participant.userId === currentUser.userId,
+    );
+
+    const isAdmin = currentUser.role === Role.ADMIN;
+
+    if (!isClient && !isMediator && !isParticipant && !isAdmin) {
+      throw new ForbiddenException(
+        'No tienes permiso para consultar este caso',
+      );
+    }
+
+    return mediationCase;
+  }
+
+  async updateStatus(
     caseId: string,
     currentUser: AuthenticatedUser,
+    dto: UpdateCaseStatusDto,
   ) {
-    const mediationCase =
-      await this.prisma.mediationCase.findFirst({
+    const mediationCase = await this.prisma.mediationCase.findFirst({
+      where: {
+        id: caseId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        status: true,
+        mediatorId: true,
+        clientId: true,
+        closedAt: true,
+      },
+    });
+
+    if (!mediationCase) {
+      throw new NotFoundException('Caso de mediación no encontrado');
+    }
+
+    const isAssignedMediator = mediationCase.mediatorId === currentUser.userId;
+
+    const isAdmin = currentUser.role === Role.ADMIN;
+
+    if (!isAssignedMediator && !isAdmin) {
+      throw new ForbiddenException(
+        'No tienes permiso para modificar este caso',
+      );
+    }
+
+    if (mediationCase.status === dto.status) {
+      throw new ConflictException(
+        'El caso ya se encuentra en el estado seleccionado',
+      );
+    }
+
+    const allowedStatuses = this.allowedTransitions[mediationCase.status];
+
+    const isTransitionAllowed = allowedStatuses.includes(dto.status);
+
+    if (!isTransitionAllowed) {
+      throw new ConflictException(
+        `No se permite cambiar el caso de ${mediationCase.status} a ${dto.status}`,
+      );
+    }
+
+    const finalStatuses: CaseStatus[] = [
+      CaseStatus.CLOSED_SUCCESS,
+      CaseStatus.CLOSED_NO_AGREEMENT,
+      CaseStatus.CANCELLED,
+    ];
+
+    const shouldCloseCase = finalStatuses.includes(dto.status);
+
+    return this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.mediationCase.updateMany({
         where: {
           id: caseId,
+          status: mediationCase.status,
           deletedAt: null,
+        },
+        data: {
+          status: dto.status,
+          closedAt: shouldCloseCase ? new Date() : null,
+        },
+      });
+
+      /*
+       * Evita que dos operaciones cambien el estado
+       * simultáneamente usando un estado anterior.
+       */
+      if (updated.count !== 1) {
+        throw new ConflictException(
+          'El estado del caso fue modificado por otro usuario',
+        );
+      }
+
+      await transaction.caseStatusHistory.create({
+        data: {
+          caseId,
+          changedById: currentUser.userId,
+          fromStatus: mediationCase.status,
+          toStatus: dto.status,
+          comment:
+            dto.comment?.trim() || this.getDefaultStatusComment(dto.status),
+        },
+      });
+
+      return transaction.mediationCase.findUnique({
+        where: {
+          id: caseId,
         },
         include: {
           request: {
@@ -135,40 +346,36 @@ export class CasesService {
           },
         },
       });
+    });
+  }
 
-    if (!mediationCase) {
-      throw new NotFoundException(
-        'Caso de mediación no encontrado',
-      );
-    }
+  private getDefaultStatusComment(status: CaseStatus): string {
+    const comments: Record<CaseStatus, string> = {
+      [CaseStatus.OPEN]: 'El caso fue abierto',
 
-    const isClient =
-      mediationCase.clientId === currentUser.userId;
+      [CaseStatus.INFORMATION_PENDING]: 'Se solicitó información adicional',
 
-    const isMediator =
-      mediationCase.mediatorId === currentUser.userId;
+      [CaseStatus.SESSION_SCHEDULED]: 'Se programó una sesión de mediación',
 
-    const isParticipant =
-      mediationCase.participants.some(
-        (participant) =>
-          participant.userId === currentUser.userId,
-      );
+      [CaseStatus.IN_MEDIATION]: 'El caso inició el proceso de mediación',
 
-    const isAdmin =
-      currentUser.role === Role.ADMIN;
+      [CaseStatus.AGREEMENT_DRAFTING]: 'Comenzó la redacción del convenio',
 
-    if (
-      !isClient &&
-      !isMediator &&
-      !isParticipant &&
-      !isAdmin
-    ) {
-      throw new ForbiddenException(
-        'No tienes permiso para consultar este caso',
-      );
-    }
+      [CaseStatus.AWAITING_SIGNATURES]: 'El convenio está pendiente de firmas',
 
-    return mediationCase;
+      [CaseStatus.SIGNED]: 'El convenio fue firmado',
+
+      [CaseStatus.REGISTRATION_PENDING]:
+        'El convenio está pendiente de registro',
+
+      [CaseStatus.CLOSED_SUCCESS]: 'El caso fue cerrado con acuerdo',
+
+      [CaseStatus.CLOSED_NO_AGREEMENT]: 'El caso fue cerrado sin acuerdo',
+
+      [CaseStatus.CANCELLED]: 'El caso fue cancelado',
+    };
+
+    return comments[status];
   }
 
   getInitialStatus(): CaseStatus {
