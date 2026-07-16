@@ -7,6 +7,7 @@ import { UsersModule } from './users/users.module';
 import { MediationRequestsModule } from './mediation-requests/mediation-requests.module';
 import { CasesModule } from './cases/cases.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { SessionsService } from './sessions/sessions.service';
 
 @Module({
   imports: [
