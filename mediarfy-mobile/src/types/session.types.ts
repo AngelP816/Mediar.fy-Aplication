@@ -53,3 +53,14 @@ export interface CreateSessionData {
   meetingUrl?: string;
   notes?: string;
 }
+
+export interface UpdateSessionStatusData {
+  status: SessionStatus;
+  comment?: string;
+}
+
+export interface RescheduleSessionData {
+  scheduledAt: string;
+  durationMinutes?: number;
+  comment?: string;
+}

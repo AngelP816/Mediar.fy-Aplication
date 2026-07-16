@@ -26,6 +26,14 @@ export default function MediatorCasesLayout() {
           title: 'Detalle del caso',
         }}
       />
+
+      <Stack.Screen
+        name="reschedule"
+        options={{
+          title: 'Reprogramar sesión',
+        }}
+      />
     </Stack>
+
   );
 }

@@ -10,9 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import DateTimePicker, {
-  DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import {
   useLocalSearchParams,
   useRouter,

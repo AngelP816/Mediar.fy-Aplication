@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Patch,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -19,15 +20,14 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { SessionsService } from './sessions.service';
+import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 
 @ApiTags('Sesiones de mediación')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('cases/:caseId/sessions')
 export class SessionsController {
-  constructor(
-    private readonly sessionsService: SessionsService,
-  ) {}
+  constructor(private readonly sessionsService: SessionsService) {}
 
   @Post()
   @ApiOperation({
@@ -44,17 +44,12 @@ export class SessionsController {
     @Body()
     dto: CreateSessionDto,
   ) {
-    return this.sessionsService.create(
-      caseId,
-      currentUser,
-      dto,
-    );
+    return this.sessionsService.create(caseId, currentUser, dto);
   }
 
   @Get()
   @ApiOperation({
-    summary:
-      'Consultar las sesiones asociadas a un caso',
+    summary: 'Consultar las sesiones asociadas a un caso',
   })
   @ApiOkResponse({
     description: 'Listado de sesiones',
@@ -65,9 +60,23 @@ export class SessionsController {
     @CurrentUser()
     currentUser: AuthenticatedUser,
   ) {
-    return this.sessionsService.findByCase(
-      caseId,
-      currentUser,
-    );
+    return this.sessionsService.findByCase(caseId, currentUser);
+  }
+  @Patch(':id/reschedule')
+  @ApiOperation({
+    summary: 'Reprogramar una sesión de mediación',
+  })
+  @ApiOkResponse({
+    description: 'Sesión reprogramada correctamente',
+  })
+  reschedule(
+    @Param('id', ParseUUIDPipe)
+    id: string,
+    @CurrentUser()
+    currentUser: AuthenticatedUser,
+    @Body()
+    dto: RescheduleSessionDto,
+  ) {
+    return this.sessionsService.reschedule(id, currentUser, dto);
   }
 }

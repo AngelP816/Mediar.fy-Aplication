@@ -18,7 +18,73 @@ import {
   MediationCaseDetail,
 } from '../../../src/types/case.types';
 import { sessionsService } from '../../../src/services/sessions.service';
-import { MediationSession } from '../../../src/types/session.types';
+import { MediationSession, SessionStatus } from '../../../src/types/session.types';
+
+interface SessionAction {
+  label: string;
+  nextStatus: SessionStatus;
+  destructive?: boolean;
+}
+
+const sessionActionsByStatus: Record<
+  SessionStatus,
+  SessionAction[]
+> = {
+  SCHEDULED: [
+    {
+      label: 'Confirmar sesión',
+      nextStatus: 'CONFIRMED',
+    },
+    {
+      label: 'Registrar inasistencia',
+      nextStatus: 'NO_SHOW',
+      destructive: true,
+    },
+    {
+      label: 'Cancelar sesión',
+      nextStatus: 'CANCELLED',
+      destructive: true,
+    },
+  ],
+
+  CONFIRMED: [
+    {
+      label: 'Marcar como completada',
+      nextStatus: 'COMPLETED',
+    },
+    {
+      label: 'Registrar inasistencia',
+      nextStatus: 'NO_SHOW',
+      destructive: true,
+    },
+    {
+      label: 'Cancelar sesión',
+      nextStatus: 'CANCELLED',
+      destructive: true,
+    },
+  ],
+
+  RESCHEDULED: [
+    {
+      label: 'Confirmar sesión',
+      nextStatus: 'CONFIRMED',
+    },
+    {
+      label: 'Registrar inasistencia',
+      nextStatus: 'NO_SHOW',
+      destructive: true,
+    },
+    {
+      label: 'Cancelar sesión',
+      nextStatus: 'CANCELLED',
+      destructive: true,
+    },
+  ],
+
+  COMPLETED: [],
+  CANCELLED: [],
+  NO_SHOW: [],
+};
 
 const statusLabels: Record<CaseStatus, string> = {
   OPEN: 'Abierto',
@@ -182,6 +248,80 @@ export default function MediatorCaseDetailScreen() {
   const [sessions, setSessions] = useState<MediationSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] =
     useState(false);
+
+  const [selectedSession, setSelectedSession] =
+    useState<MediationSession | null>(null);
+
+  const [selectedSessionAction, setSelectedSessionAction] =
+    useState<SessionAction | null>(null);
+
+  const [sessionComment, setSessionComment] =
+    useState('');
+
+  const [isUpdatingSession, setIsUpdatingSession] =
+    useState(false);
+
+  const handleUpdateSessionStatus = async () => {
+    if (
+      !selectedSession ||
+      !selectedSessionAction
+    ) {
+      return;
+    }
+
+    try {
+      setIsUpdatingSession(true);
+
+      const updatedSession =
+        await sessionsService.updateStatus(
+          selectedSession.id,
+          {
+            status:
+              selectedSessionAction.nextStatus,
+            comment:
+              sessionComment.trim() || undefined,
+          },
+        );
+
+      setSessions((currentSessions) =>
+        currentSessions.map((session) =>
+          session.id === updatedSession.id
+            ? updatedSession
+            : session,
+        ),
+      );
+
+      setSelectedSession(null);
+      setSelectedSessionAction(null);
+      setSessionComment('');
+
+      await loadCase();
+
+      Alert.alert(
+        'Sesión actualizada',
+        'El estado de la sesión se actualizó correctamente.',
+      );
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const apiMessage =
+          error.response?.data?.message;
+
+        Alert.alert(
+          'No fue posible actuali zar la sesión',
+          typeof apiMessage === 'string'
+            ? apiMessage
+            : 'Ocurrió un error al actualizar la sesión',
+        );
+      } else {
+        Alert.alert(
+          'No fue posible actualizar la sesión',
+          'Ocurrió un error inesperado',
+        );
+      }
+    } finally {
+      setIsUpdatingSession(false);
+    }
+  };
 
   const availableActions = useMemo(() => {
     if (!mediationCase) {
@@ -559,6 +699,71 @@ export default function MediatorCaseDetailScreen() {
                     Notas: {session.notes}
                   </Text>
                 ) : null}
+
+                {[
+                  'SCHEDULED',
+                  'CONFIRMED',
+                  'RESCHEDULED',
+                ].includes(session.status) ? (
+                  <Pressable
+                    style={styles.rescheduleButton}
+                    onPress={() =>
+                      router.push({
+                        pathname:
+                          '/(mediator)/cases/reschedule',
+                        params: {
+                          sessionId: session.id,
+                          scheduledAt: session.scheduledAt,
+                          durationMinutes: String(
+                            session.durationMinutes,
+                          ),
+                        },
+                      })
+                    }
+                  >
+                    <Text style={styles.rescheduleButtonText}>
+                      Reprogramar sesión 
+                    </Text>
+                  </Pressable>
+                ) : null}
+
+                {sessionActionsByStatus[
+                  session.status
+                ].length > 0 ? (
+                  <View style={styles.sessionActions}>
+                    {sessionActionsByStatus[
+                      session.status
+                    ].map((action) => (
+                      <Pressable
+                        key={action.nextStatus}
+                        style={[
+                          styles.sessionActionButton,
+                          action.destructive &&
+                          styles.sessionDestructiveButton,
+                        ]}
+                        onPress={() => {
+                          setSelectedSession(session);
+                          setSelectedSessionAction(action);
+                          setSessionComment('');
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.sessionActionText,
+                            action.destructive &&
+                            styles.sessionDestructiveText,
+                          ]}
+                        >
+                          {action.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.sessionFinalText}>
+                    Esta sesión ya no admite cambios.
+                  </Text>
+                )}
               </View>
             ))
           )}
@@ -678,6 +883,97 @@ export default function MediatorCaseDetailScreen() {
                 }
               >
                 {isUpdating ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.confirmButtonText}>
+                    Confirmar
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={
+          selectedSession !== null &&
+          selectedSessionAction !== null
+        }
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isUpdatingSession) {
+            setSelectedSession(null);
+            setSelectedSessionAction(null);
+            setSessionComment('');
+          }
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>
+              Actualizar sesión
+            </Text>
+
+            <Text style={styles.modalDescription}>
+              La sesión{' '}
+              <Text style={styles.boldText}>
+                {selectedSession?.title}
+              </Text>{' '}
+              cambiará a{' '}
+              <Text style={styles.boldText}>
+                {selectedSessionAction?.label}
+              </Text>
+              .
+            </Text>
+
+            <Text style={styles.inputLabel}>
+              Comentario
+            </Text>
+
+            <TextInput
+              value={sessionComment}
+              onChangeText={setSessionComment}
+              editable={!isUpdatingSession}
+              multiline
+              maxLength={500}
+              textAlignVertical="top"
+              style={styles.commentInput}
+              placeholder="Describe el motivo o resultado"
+            />
+
+            <Text style={styles.characterCount}>
+              {sessionComment.length}/500
+            </Text>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                disabled={isUpdatingSession}
+                style={styles.cancelButton}
+                onPress={() => {
+                  setSelectedSession(null);
+                  setSelectedSessionAction(null);
+                  setSessionComment('');
+                }}
+              >
+                <Text style={styles.cancelButtonText}>
+                  Cancelar
+                </Text>
+              </Pressable>
+
+              <Pressable
+                disabled={isUpdatingSession}
+                style={[
+                  styles.confirmButton,
+                  isUpdatingSession &&
+                  styles.disabledButton,
+                ]}
+                onPress={() =>
+                  void handleUpdateSessionStatus()
+                }
+              >
+                {isUpdatingSession ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <Text style={styles.confirmButtonText}>
@@ -1057,5 +1353,56 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontStyle: 'italic',
     color: '#718096',
+  },
+
+  sessionActions: {
+    marginTop: 14,
+    gap: 8,
+  },
+
+  sessionActionButton: {
+    alignItems: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderRadius: 9,
+    backgroundColor: '#1A365D',
+  },
+
+  sessionActionText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  sessionDestructiveButton: {
+    borderWidth: 1,
+    borderColor: '#C53030',
+    backgroundColor: '#FFFFFF',
+  },
+
+  sessionDestructiveText: {
+    color: '#C53030',
+  },
+
+  sessionFinalText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#718096',
+    fontStyle: 'italic',
+  },
+
+  rescheduleButton: {
+    alignItems: 'center',
+    marginTop: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#2B6CB0',
+    borderRadius: 9,
+    backgroundColor: '#EBF8FF',
+  },
+
+  rescheduleButtonText: {
+    color: '#2B6CB0',
+    fontWeight: '700',
   },
 });
