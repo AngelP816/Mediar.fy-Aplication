@@ -1,36 +1,65 @@
-import { Stack } from 'expo-router';
+import { Tabs } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function ClientLayout() {
   return (
-    <Stack>
-      <Stack.Screen
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: '#1A365D',
+        tabBarInactiveTintColor: '#718096',
+        tabBarStyle: {
+          height: 64,
+          paddingBottom: 8,
+          paddingTop: 6,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '600',
+        },
+      }}
+    >
+      <Tabs.Screen
         name="index"
         options={{
           title: 'Inicio',
-          headerBackVisible: false,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons
+              name="home-outline"
+              color={color}
+              size={size}
+            />
+          ),
         }}
       />
 
-      <Stack.Screen
-        name="requests/index"
+      <Tabs.Screen
+        name="requests"
         options={{
-          title: 'Mis solicitudes',
+          title: 'Solicitudes',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons
+              name="document-text-outline"
+              color={color}
+              size={size}
+            />
+          ),
         }}
       />
 
-      <Stack.Screen
-        name="requests/create"
+      <Tabs.Screen
+        name="cases"
         options={{
-          title: 'Nueva solicitud',
+          title: 'Casos',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons
+              name="folder-open-outline"
+              color={color}
+              size={size}
+            />
+          ),
         }}
       />
-
-      <Stack.Screen
-        name="requests/[id]"
-        options={{
-          title: 'Detalle de solicitud',
-        }}
-      />
-    </Stack>
+    </Tabs>
   );
 }
