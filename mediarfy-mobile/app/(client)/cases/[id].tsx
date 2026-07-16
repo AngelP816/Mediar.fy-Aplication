@@ -14,6 +14,8 @@ import {
   CaseStatus,
   MediationCaseDetail,
 } from '../../../src/types/case.types';
+import { sessionsService } from '../../../src/services/sessions.service';
+import { MediationSession } from '../../../src/types/session.types';
 
 const statusLabels: Record<CaseStatus, string> = {
   OPEN: 'Abierto',
@@ -30,6 +32,9 @@ const statusLabels: Record<CaseStatus, string> = {
 };
 
 export default function ClientCaseDetailScreen() {
+  const [sessions, setSessions] =
+    useState<MediationSession[]>([]);
+
   const params = useLocalSearchParams<{
     id?: string | string[];
   }>();
@@ -44,6 +49,9 @@ export default function ClientCaseDetailScreen() {
   const [error, setError] = useState<string | null>(
     null,
   );
+
+  const [isLoadingSessions, setIsLoadingSessions] =
+    useState(false);
 
   const loadCase = useCallback(async () => {
     if (!caseId) {
@@ -81,10 +89,33 @@ export default function ClientCaseDetailScreen() {
     }
   }, [caseId]);
 
+  const loadSessions = useCallback(async () => {
+    if (!caseId) {
+      return;
+    }
+
+    try {
+      setIsLoadingSessions(true);
+
+      const data =
+        await sessionsService.getByCase(caseId);
+
+      setSessions(data);
+    } catch (error) {
+      console.log(
+        'Error cargando sesiones:',
+        error,
+      );
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, [caseId]);
+
   useFocusEffect(
     useCallback(() => {
       void loadCase();
-    }, [loadCase]),
+      void loadSessions();
+    }, [loadCase, loadSessions]),
   );
 
   if (isLoading) {
@@ -209,6 +240,59 @@ export default function ClientCaseDetailScreen() {
               ) : null}
             </View>
           ),
+        )}
+      </Section>
+
+      <Section title="Sesiones programadas">
+        {isLoadingSessions ? (
+          <ActivityIndicator />
+        ) : sessions.length === 0 ? (
+          <Text style={styles.emptySessionsText}>
+            Todavía no hay sesiones programadas.
+          </Text>
+        ) : (
+          sessions.map((session) => (
+            <View
+              key={session.id}
+              style={styles.sessionCard}
+            >
+              <Text style={styles.sessionTitle}>
+                {session.title}
+              </Text>
+
+              <Text style={styles.sessionDate}>
+                {new Date(
+                  session.scheduledAt,
+                ).toLocaleString('es-MX')}
+              </Text>
+
+              <Text style={styles.sessionDetail}>
+                Duración: {session.durationMinutes}{' '}
+                minutos
+              </Text>
+
+              <Text style={styles.sessionDetail}>
+                Modalidad:{' '}
+                {session.modality === 'IN_PERSON'
+                  ? 'Presencial'
+                  : session.modality === 'VIRTUAL'
+                    ? 'Virtual'
+                    : 'Híbrida'}
+              </Text>
+
+              {session.location ? (
+                <Text style={styles.sessionDetail}>
+                  Ubicación: {session.location}
+                </Text>
+              ) : null}
+
+              {session.meetingUrl ? (
+                <Text style={styles.sessionDetail}>
+                  Enlace: {session.meetingUrl}
+                </Text>
+              ) : null}
+            </View>
+          ))
         )}
       </Section>
 
@@ -413,5 +497,78 @@ const styles = StyleSheet.create({
   retryButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+  scheduleButton: {
+    alignItems: 'center',
+    paddingVertical: 13,
+    borderRadius: 10,
+    backgroundColor: '#1A365D',
+  },
+
+  scheduleButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  sessionsLoader: {
+    marginTop: 18,
+  },
+
+  emptySessionsText: {
+    marginTop: 16,
+    color: '#718096',
+    textAlign: 'center',
+  },
+
+  sessionCard: {
+    marginTop: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#F7FAFC',
+  },
+
+  sessionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+
+  sessionTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  sessionStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2B6CB0',
+  },
+
+  sessionDate: {
+    marginTop: 9,
+    fontWeight: '600',
+    color: '#2D3748',
+  },
+
+  sessionDetail: {
+    marginTop: 5,
+    color: '#4A5568',
+  },
+
+  sessionDescription: {
+    marginTop: 10,
+    color: '#4A5568',
+    lineHeight: 20,
+  },
+
+  sessionNotes: {
+    marginTop: 8,
+    fontStyle: 'italic',
+    color: '#718096',
   },
 });

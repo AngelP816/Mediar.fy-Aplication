@@ -10,13 +10,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import axios from 'axios';
 import { casesService } from '../../../src/services/cases.service';
 import {
   CaseStatus,
   MediationCaseDetail,
 } from '../../../src/types/case.types';
+import { sessionsService } from '../../../src/services/sessions.service';
+import { MediationSession } from '../../../src/types/session.types';
 
 const statusLabels: Record<CaseStatus, string> = {
   OPEN: 'Abierto',
@@ -155,6 +157,7 @@ const actionsByStatus: Record<
 };
 
 export default function MediatorCaseDetailScreen() {
+  const router = useRouter();
   const params = useLocalSearchParams<{
     id?: string | string[];
   }>();
@@ -174,6 +177,10 @@ export default function MediatorCaseDetailScreen() {
   const [comment, setComment] = useState('');
 
   const [isUpdating, setIsUpdating] =
+    useState(false);
+
+  const [sessions, setSessions] = useState<MediationSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] =
     useState(false);
 
   const availableActions = useMemo(() => {
@@ -272,10 +279,33 @@ export default function MediatorCaseDetailScreen() {
     }
   }, [caseId]);
 
+  const loadSessions = useCallback(async () => {
+    if (!caseId) {
+      return;
+    }
+
+    try {
+      setIsLoadingSessions(true);
+
+      const data =
+        await sessionsService.getByCase(caseId);
+
+      setSessions(data);
+    } catch (error) {
+      console.log(
+        'Error cargando sesiones:',
+        error,
+      );
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, [caseId]);
+
   useFocusEffect(
     useCallback(() => {
       void loadCase();
-    }, [loadCase]),
+      void loadSessions();
+    }, [loadCase, loadSessions]),
   );
 
   if (isLoading) {
@@ -312,136 +342,261 @@ export default function MediatorCaseDetailScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-    >
-      <Text style={styles.folio}>
-        {mediationCase.folio}
-      </Text>
-
-      <Text style={styles.title}>
-        {mediationCase.title}
-      </Text>
-
-      <View style={styles.statusBadge}>
-        <Text style={styles.statusText}>
-          {statusLabels[mediationCase.status]}
-        </Text>
-      </View>
-
-      <Section title="Descripción">
-        <Text style={styles.bodyText}>
-          {mediationCase.description}
-        </Text>
-      </Section>
-
-      <Section title="Información del expediente">
-        <InfoRow
-          label="Solicitud original"
-          value={mediationCase.request.folio}
-        />
-
-        <InfoRow
-          label="Tipo"
-          value={mediationCase.request.type}
-        />
-
-        <InfoRow
-          label="Urgencia"
-          value={mediationCase.request.urgency}
-        />
-
-        <InfoRow
-          label="Fecha de apertura"
-          value={new Date(
-            mediationCase.openedAt,
-          ).toLocaleString()}
-        />
-      </Section>
-
-      <Section title="Mediador asignado">
-        <Text style={styles.personName}>
-          {mediationCase.mediator.firstName}{' '}
-          {mediationCase.mediator.lastName}
+    <>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+      >
+        <Text style={styles.folio}>
+          {mediationCase.folio}
         </Text>
 
-        <Text style={styles.personDetail}>
-          {mediationCase.mediator.email}
+        <Text style={styles.title}>
+          {mediationCase.title}
         </Text>
 
-        {mediationCase.mediator.phone ? (
+        <View style={styles.statusBadge}>
+          <Text style={styles.statusText}>
+            {statusLabels[mediationCase.status]}
+          </Text>
+        </View>
+
+        <Section title="Descripción">
+          <Text style={styles.bodyText}>
+            {mediationCase.description}
+          </Text>
+        </Section>
+
+        <Section title="Información del expediente">
+          <InfoRow
+            label="Solicitud original"
+            value={mediationCase.request.folio}
+          />
+
+          <InfoRow
+            label="Tipo"
+            value={mediationCase.request.type}
+          />
+
+          <InfoRow
+            label="Urgencia"
+            value={mediationCase.request.urgency}
+          />
+
+          <InfoRow
+            label="Fecha de apertura"
+            value={new Date(
+              mediationCase.openedAt,
+            ).toLocaleString()}
+          />
+        </Section>
+
+        <Section title="Mediador asignado">
+          <Text style={styles.personName}>
+            {mediationCase.mediator.firstName}{' '}
+            {mediationCase.mediator.lastName}
+          </Text>
+
           <Text style={styles.personDetail}>
-            {mediationCase.mediator.phone}
-          </Text>
-        ) : null}
-      </Section>
-
-      <Section title="Participantes">
-        {mediationCase.participants.map(
-          (participant) => (
-            <View
-              key={participant.id}
-              style={styles.participant}
-            >
-              <Text style={styles.personName}>
-                {participant.firstName}{' '}
-                {participant.lastName}
-              </Text>
-
-              <Text style={styles.personDetail}>
-                Rol: {participant.role}
-              </Text>
-
-              {participant.email ? (
-                <Text style={styles.personDetail}>
-                  {participant.email}
-                </Text>
-              ) : null}
-            </View>
-          ),
-        )}
-      </Section>
-
-      {availableActions.length > 0 ? (
-        <Section title="Acciones del caso">
-          <Text style={styles.actionHelp}>
-            Selecciona la siguiente etapa del expediente.
+            {mediationCase.mediator.email}
           </Text>
 
-          {availableActions.map((action) => (
-            <Pressable
-              key={action.nextStatus}
-              style={[
-                styles.actionButton,
-                action.destructive &&
-                styles.destructiveButton,
-              ]}
-              onPress={() => {
-                setSelectedAction(action);
-                setComment('');
-              }}
-            >
-              <Text
-                style={[
-                  styles.actionButtonText,
-                  action.destructive &&
-                  styles.destructiveButtonText,
-                ]}
+          {mediationCase.mediator.phone ? (
+            <Text style={styles.personDetail}>
+              {mediationCase.mediator.phone}
+            </Text>
+          ) : null}
+        </Section>
+
+        <Section title="Participantes">
+          {mediationCase.participants.map(
+            (participant) => (
+              <View
+                key={participant.id}
+                style={styles.participant}
               >
-                {action.label}
-              </Text>
-            </Pressable>
-          ))}
+                <Text style={styles.personName}>
+                  {participant.firstName}{' '}
+                  {participant.lastName}
+                </Text>
+
+                <Text style={styles.personDetail}>
+                  Rol: {participant.role}
+                </Text>
+
+                {participant.email ? (
+                  <Text style={styles.personDetail}>
+                    {participant.email}
+                  </Text>
+                ) : null}
+              </View>
+            ),
+          )}
         </Section>
-      ) : (
-        <Section title="Estado del caso">
-          <Text style={styles.finishedText}>
-            Este expediente se encuentra en un estado
-            final y ya no admite cambios.
-          </Text>
+
+        {availableActions.length > 0 ? (
+          <Section title="Acciones del caso">
+            <Text style={styles.actionHelp}>
+              Selecciona la siguiente etapa del expediente.
+            </Text>
+
+            {availableActions.map((action) => (
+              <Pressable
+                key={action.nextStatus}
+                style={[
+                  styles.actionButton,
+                  action.destructive &&
+                  styles.destructiveButton,
+                ]}
+                onPress={() => {
+                  setSelectedAction(action);
+                  setComment('');
+                }}
+              >
+                <Text
+                  style={[
+                    styles.actionButtonText,
+                    action.destructive &&
+                    styles.destructiveButtonText,
+                  ]}
+                >
+                  {action.label}
+                </Text>
+              </Pressable>
+            ))}
+          </Section>
+        ) : (
+          <Section title="Estado del caso">
+            <Text style={styles.finishedText}>
+              Este expediente se encuentra en un estado
+              final y ya no admite cambios.
+            </Text>
+          </Section>
+        )}
+
+        <Section title="Agenda">
+          <Pressable
+            style={styles.scheduleButton}
+            onPress={() =>
+              router.push({
+                pathname:
+                  '/(mediator)/cases/schedule',
+                params: {
+                  caseId,
+                },
+              })
+            }
+          >
+            <Text style={styles.scheduleButtonText}>
+              Programar nueva sesión
+            </Text>
+          </Pressable>
+
+          {isLoadingSessions ? (
+            <ActivityIndicator
+              style={styles.sessionsLoader}
+            />
+          ) : sessions.length === 0 ? (
+            <Text style={styles.emptySessionsText}>
+              Todavía no hay sesiones programadas.
+            </Text>
+          ) : (
+            sessions.map((session) => (
+              <View
+                key={session.id}
+                style={styles.sessionCard}
+              >
+                <View style={styles.sessionHeader}>
+                  <Text style={styles.sessionTitle}>
+                    {session.title}
+                  </Text>
+
+                  <Text style={styles.sessionStatus}>
+                    {session.status}
+                  </Text>
+                </View>
+
+                <Text style={styles.sessionDate}>
+                  {new Date(
+                    session.scheduledAt,
+                  ).toLocaleString('es-MX')}
+                </Text>
+
+                <Text style={styles.sessionDetail}>
+                  Duración: {session.durationMinutes}{' '}
+                  minutos
+                </Text>
+
+                <Text style={styles.sessionDetail}>
+                  Modalidad:{' '}
+                  {session.modality === 'IN_PERSON'
+                    ? 'Presencial'
+                    : session.modality === 'VIRTUAL'
+                      ? 'Virtual'
+                      : 'Híbrida'}
+                </Text>
+
+                {session.location ? (
+                  <Text style={styles.sessionDetail}>
+                    Ubicación: {session.location}
+                  </Text>
+                ) : null}
+
+                {session.meetingUrl ? (
+                  <Text style={styles.sessionDetail}>
+                    Enlace: {session.meetingUrl}
+                  </Text>
+                ) : null}
+
+                {session.description ? (
+                  <Text style={styles.sessionDescription}>
+                    {session.description}
+                  </Text>
+                ) : null}
+
+                {session.notes ? (
+                  <Text style={styles.sessionNotes}>
+                    Notas: {session.notes}
+                  </Text>
+                ) : null}
+              </View>
+            ))
+          )}
         </Section>
-      )}
+
+        <Section title="Historial del caso">
+          {mediationCase.statusHistory.map(
+            (history) => (
+              <View
+                key={history.id}
+                style={styles.historyItem}
+              >
+                <Text style={styles.historyStatus}>
+                  {statusLabels[history.toStatus]}
+                </Text>
+
+                {history.comment ? (
+                  <Text style={styles.historyComment}>
+                    {history.comment}
+                  </Text>
+                ) : null}
+
+                <Text style={styles.historyDate}>
+                  {new Date(
+                    history.createdAt,
+                  ).toLocaleString()}
+                </Text>
+
+                <Text style={styles.historyUser}>
+                  Modificado por:{' '}
+                  {history.changedBy.firstName}{' '}
+                  {history.changedBy.lastName}
+                </Text>
+              </View>
+            ),
+          )}
+        </Section>
+      </ScrollView>
 
       <Modal
         visible={selectedAction !== null}
@@ -534,40 +689,7 @@ export default function MediatorCaseDetailScreen() {
           </View>
         </View>
       </Modal>
-
-      <Section title="Historial del caso">
-        {mediationCase.statusHistory.map(
-          (history) => (
-            <View
-              key={history.id}
-              style={styles.historyItem}
-            >
-              <Text style={styles.historyStatus}>
-                {statusLabels[history.toStatus]}
-              </Text>
-
-              {history.comment ? (
-                <Text style={styles.historyComment}>
-                  {history.comment}
-                </Text>
-              ) : null}
-
-              <Text style={styles.historyDate}>
-                {new Date(
-                  history.createdAt,
-                ).toLocaleString()}
-              </Text>
-
-              <Text style={styles.historyUser}>
-                Modificado por:{' '}
-                {history.changedBy.firstName}{' '}
-                {history.changedBy.lastName}
-              </Text>
-            </View>
-          ),
-        )}
-      </Section>
-    </ScrollView>
+    </>
   );
 }
 
@@ -861,5 +983,79 @@ const styles = StyleSheet.create({
 
   disabledButton: {
     opacity: 0.6,
+  },
+
+  scheduleButton: {
+    alignItems: 'center',
+    paddingVertical: 13,
+    borderRadius: 10,
+    backgroundColor: '#1A365D',
+  },
+
+  scheduleButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  sessionsLoader: {
+    marginTop: 18,
+  },
+
+  emptySessionsText: {
+    marginTop: 16,
+    color: '#718096',
+    textAlign: 'center',
+  },
+
+  sessionCard: {
+    marginTop: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#F7FAFC',
+  },
+
+  sessionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+
+  sessionTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  sessionStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2B6CB0',
+  },
+
+  sessionDate: {
+    marginTop: 9,
+    fontWeight: '600',
+    color: '#2D3748',
+  },
+
+  sessionDetail: {
+    marginTop: 5,
+    color: '#4A5568',
+  },
+
+  sessionDescription: {
+    marginTop: 10,
+    color: '#4A5568',
+    lineHeight: 20,
+  },
+
+  sessionNotes: {
+    marginTop: 8,
+    fontStyle: 'italic',
+    color: '#718096',
   },
 });
