@@ -46,3 +46,6 @@ desktop.ini
 *.tmp
 *.temp
 ~$*
+
+# Documentos a guardar de la aplicación para pruebas y desarrollo
+uploads/

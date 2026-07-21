@@ -40,6 +40,20 @@ export default function MediatorCasesLayout() {
           title: 'Invitar participante',
         }}
       />
+
+      <Stack.Screen
+        name="documents/upload"
+        options={{
+          title: 'Subir documento',
+        }}
+      />
+
+      <Stack.Screen
+        name="documents/[documentId]"
+        options={{
+          title: 'Versiones del documento',
+        }}
+      />
     </Stack>
 
   );

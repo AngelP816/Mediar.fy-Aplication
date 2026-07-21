@@ -9,6 +9,7 @@ import { CasesModule } from './cases/cases.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SessionsService } from './sessions/sessions.service';
 import { CaseInvitationsModule } from './case-invitations/case-invitations.module';
+import { CaseDocumentsModule } from './case-documents/case-documents.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CaseInvitationsModule } from './case-invitations/case-invitations.modul
     CasesModule,
     SessionsModule,
     CaseInvitationsModule,
+    CaseDocumentsModule,
   ],
 })
 export class AppModule {}

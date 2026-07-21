@@ -96,6 +96,25 @@ enum CaseInvitationStatus {
   CANCELLED
 }
 
+enum CaseDocumentType {
+  IDENTIFICATION
+  PROPERTY_DOCUMENT
+  CONTRACT
+  REQUEST
+  EVIDENCE
+  AGREEMENT_DRAFT
+  SIGNED_AGREEMENT
+  REGISTRATION_PROOF
+  PAYMENT_RECEIPT
+  OTHER
+}
+
+enum CaseDocumentStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
 model User {
   id           String     @id @default(uuid())
   email        String     @unique
@@ -121,8 +140,11 @@ model User {
   caseParticipants  CaseParticipant[]
   caseStatusChanges CaseStatusHistory[] @relation("CaseStatusChanges")
 
-  createdCaseInvitations CaseInvitation[] @relation("CaseInvitationCreatedBy")
+  createdCaseInvitations  CaseInvitation[] @relation("CaseInvitationCreatedBy")
   acceptedCaseInvitations CaseInvitation[] @relation("CaseInvitationAcceptedBy")
+
+  uploadedCaseDocuments    CaseDocument[]        @relation("CaseDocumentUploadedBy")
+  uploadedDocumentVersions CaseDocumentVersion[] @relation("DocumentVersionUploadedBy")
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -232,11 +254,12 @@ model MediationCase {
   participants  CaseParticipant[]
   statusHistory CaseStatusHistory[]
   sessions      MediationSession[]
-  invitations CaseInvitation[]
+  invitations   CaseInvitation[]
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+  caseDocuments CaseDocument[]
 
   @@index([clientId])
   @@index([mediatorId])
@@ -343,8 +366,8 @@ model CaseInvitation {
   lastName  String
   phone     String?
 
-  participantRole CaseParticipantRole    @default(INVITED_PARTY)
-  status          CaseInvitationStatus   @default(PENDING)
+  participantRole CaseParticipantRole  @default(INVITED_PARTY)
+  status          CaseInvitationStatus @default(PENDING)
 
   token     String   @unique
   expiresAt DateTime
@@ -369,6 +392,65 @@ model CaseInvitation {
   @@index([status])
   @@index([participantRole])
   @@index([expiresAt])
-
   @@map("case_invitations")
+}
+
+model CaseDocument {
+  id String @id @default(uuid())
+
+  caseId       String
+  uploadedById String
+
+  name        String
+  description String?
+  type        CaseDocumentType
+  status      CaseDocumentStatus @default(ACTIVE)
+
+  currentVersion Int @default(1)
+
+  mediationCase MediationCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  uploadedBy User @relation("CaseDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  versions CaseDocumentVersion[]
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+  deletedAt  DateTime?
+
+  @@index([caseId])
+  @@index([uploadedById])
+  @@index([type])
+  @@index([status])
+  @@map("case_documents")
+}
+
+model CaseDocumentVersion {
+  id String @id @default(uuid())
+
+  documentId   String
+  uploadedById String
+
+  versionNumber Int
+
+  originalName String
+  storedName   String
+  storagePath  String
+  mimeType     String
+  sizeBytes    Int
+
+  checksum String?
+  notes    String?
+
+  document CaseDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  uploadedBy User @relation("DocumentVersionUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId])
+  @@index([uploadedById])
+  @@map("case_document_versions")
 }

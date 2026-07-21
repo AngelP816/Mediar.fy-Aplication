@@ -25,6 +25,16 @@ import {
   CaseInvitationStatus,
   InvitationParticipantRole,
 } from '../../../src/types/case-invitation.types';
+import { caseDocumentsService } from '../../../src/services/case-documents.service';
+
+import {
+  CaseDocument,
+} from '../../../src/types/case-document.types';
+
+import {
+  documentTypeLabels,
+  formatFileSize,
+} from '../../../src/utils/case-document.util';
 
 interface SessionAction {
   label: string;
@@ -296,6 +306,14 @@ export default function MediatorCaseDetailScreen() {
     setIsLoadingInvitations,
   ] = useState(false);
 
+  const [documents, setDocuments] =
+    useState<CaseDocument[]>([]);
+
+  const [
+    isLoadingDocuments,
+    setIsLoadingDocuments,
+  ] = useState(false);
+
   const loadInvitations =
     useCallback(async () => {
       if (!caseId) {
@@ -318,6 +336,31 @@ export default function MediatorCaseDetailScreen() {
         );
       } finally {
         setIsLoadingInvitations(false);
+      }
+    }, [caseId]);
+
+  const loadDocuments =
+    useCallback(async () => {
+      if (!caseId) {
+        return;
+      }
+
+      try {
+        setIsLoadingDocuments(true);
+
+        const data =
+          await caseDocumentsService.getByCase(
+            caseId,
+          );
+
+        setDocuments(data);
+      } catch (requestError) {
+        console.log(
+          'Error cargando documentos:',
+          requestError,
+        );
+      } finally {
+        setIsLoadingDocuments(false);
       }
     }, [caseId]);
 
@@ -506,7 +549,13 @@ export default function MediatorCaseDetailScreen() {
       void loadCase();
       void loadSessions();
       void loadInvitations();
-    }, [loadCase, loadSessions, loadInvitations]),
+      void loadDocuments();
+    }, [
+      loadCase,
+      loadSessions,
+      loadInvitations,
+      loadDocuments,
+    ]),
   );
 
   if (isLoading) {
@@ -776,6 +825,166 @@ export default function MediatorCaseDetailScreen() {
                 ) : null}
               </View>
             ))
+          )}
+        </Section>
+
+        <Section title="Documentos del expediente">
+          <Pressable
+            style={styles.uploadDocumentButton}
+            onPress={() =>
+              router.push({
+                pathname:
+                  '/(mediator)/cases/documents/upload',
+                params: {
+                  caseId,
+                },
+              })
+            }
+          >
+            <Text
+              style={
+                styles.uploadDocumentButtonText
+              }
+            >
+              Subir documento
+            </Text>
+          </Pressable>
+
+          {isLoadingDocuments ? (
+            <ActivityIndicator
+              style={styles.documentsLoader}
+            />
+          ) : documents.length === 0 ? (
+            <Text style={styles.emptyDocumentsText}>
+              Todavía no se han agregado documentos
+              al expediente.
+            </Text>
+          ) : (
+            documents.map((document) => {
+              const currentFile =
+                document.versions[0];
+
+              return (
+                <View
+                  key={document.id}
+                  style={styles.documentCard}
+                >
+                  <View style={styles.documentHeader}>
+                    <View style={styles.documentInfo}>
+                      <Text style={styles.documentName}>
+                        {document.name}
+                      </Text>
+
+                      <Text style={styles.documentType}>
+                        {documentTypeLabels[
+                          document.type
+                        ]}
+                      </Text>
+                    </View>
+
+                    <View
+                      style={styles.documentVersionBadge}
+                    >
+                      <Text
+                        style={
+                          styles.documentVersionText
+                        }
+                      >
+                        v{document.currentVersion}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {document.description ? (
+                    <Text
+                      style={styles.documentDescription}
+                    >
+                      {document.description}
+                    </Text>
+                  ) : null}
+
+                  {currentFile ? (
+                    <View
+                      style={
+                        styles.currentDocumentFile
+                      }
+                    >
+                      <Text
+                        style={
+                          styles.documentFileName
+                        }
+                      >
+                        {currentFile.originalName}
+                      </Text>
+
+                      <Text
+                        style={
+                          styles.documentFileDetail
+                        }
+                      >
+                        {formatFileSize(
+                          currentFile.sizeBytes,
+                        )}
+                      </Text>
+
+                      <Text
+                        style={
+                          styles.documentFileDetail
+                        }
+                      >
+                        Subido por:{' '}
+                        {
+                          currentFile.uploadedBy
+                            .firstName
+                        }{' '}
+                        {
+                          currentFile.uploadedBy
+                            .lastName
+                        }
+                      </Text>
+
+                      <Text
+                        style={
+                          styles.documentFileDetail
+                        }
+                      >
+                        {new Date(
+                          currentFile.createdAt,
+                        ).toLocaleString('es-MX')}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.missingFileText}>
+                      No se encontró información de la
+                      versión actual.
+                    </Text>
+                  )}
+
+                  <Pressable
+                    style={styles.viewVersionsButton}
+                    onPress={() =>
+                      router.push({
+                        pathname:
+                          '/(mediator)/cases/documents/[documentId]',
+                        params: {
+                          documentId: document.id,
+                          documentName:
+                            document.name,
+                        },
+                      })
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.viewVersionsButtonText
+                      }
+                    >
+                      Ver versiones
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })
           )}
         </Section>
 
@@ -1658,5 +1867,119 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 13,
     color: '#975A16',
+  },
+
+  uploadDocumentButton: {
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 10,
+    backgroundColor: '#1A365D',
+  },
+
+  uploadDocumentButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  documentsLoader: {
+    marginTop: 18,
+  },
+
+  emptyDocumentsText: {
+    marginTop: 16,
+    textAlign: 'center',
+    color: '#718096',
+    lineHeight: 20,
+  },
+
+  documentCard: {
+    marginTop: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#F7FAFC',
+  },
+
+  documentHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+
+  documentInfo: {
+    flex: 1,
+  },
+
+  documentName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  documentType: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#2B6CB0',
+  },
+
+  documentVersionBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: '#EBF8FF',
+  },
+
+  documentVersionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2C5282',
+  },
+
+  documentDescription: {
+    marginTop: 10,
+    color: '#4A5568',
+    lineHeight: 20,
+  },
+
+  currentDocumentFile: {
+    marginTop: 12,
+    padding: 11,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+  },
+
+  documentFileName: {
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  documentFileDetail: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#718096',
+  },
+
+  missingFileText: {
+    marginTop: 12,
+    fontStyle: 'italic',
+    color: '#C53030',
+  },
+
+  viewVersionsButton: {
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: '#2B6CB0',
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+  },
+
+  viewVersionsButtonText: {
+    color: '#2B6CB0',
+    fontWeight: '700',
   },
 });
