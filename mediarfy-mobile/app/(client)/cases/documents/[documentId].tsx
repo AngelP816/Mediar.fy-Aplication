@@ -15,22 +15,19 @@ import {
 import {
   useFocusEffect,
   useLocalSearchParams,
-  useRouter,
 } from 'expo-router';
-//import * as Sharing from 'expo-sharing';
 import axios from 'axios';
 
-import {
+import type {
   CaseDocumentVersion,
 } from '../../../../src/types/case-document.types';
+
 import { caseDocumentsService } from '../../../../src/services/case-documents.service';
 import { downloadProtectedFile } from '../../../../src/services/file-download.service';
-import { formatFileSize } from '../../../../src/utils/case-document.util';
 import { openFileWithCompatibleApp } from '../../../../src/services/file-opener.service';
+import { formatFileSize } from '../../../../src/utils/case-document.util';
 
-export default function DocumentVersionsScreen() {
-  const router = useRouter();
-
+export default function ClientDocumentVersionsScreen() {
   const params = useLocalSearchParams<{
     documentId?: string | string[];
     documentName?: string | string[];
@@ -69,9 +66,10 @@ export default function DocumentVersionsScreen() {
     useCallback(async () => {
       if (!documentId) {
         setError(
-          'No se recibió el identificador del documento',
+          'No se recibió el identificador del documento.',
         );
         setIsLoading(false);
+        setIsRefreshing(false);
         return;
       }
 
@@ -92,11 +90,11 @@ export default function DocumentVersionsScreen() {
           setError(
             typeof message === 'string'
               ? message
-              : 'No fue posible cargar las versiones',
+              : 'No fue posible cargar las versiones.',
           );
         } else {
           setError(
-            'No fue posible cargar las versiones',
+            'No fue posible cargar las versiones.',
           );
         }
       } finally {
@@ -111,26 +109,7 @@ export default function DocumentVersionsScreen() {
     }, [loadVersions]),
   );
 
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    void loadVersions();
-  };
-
-  const handlePreview = (
-    version: CaseDocumentVersion,
-  ) => {
-    router.push({
-      pathname:
-        '/(mediator)/cases/documents/viewer',
-      params: {
-        versionId: version.id,
-        fileName: version.originalName,
-        mimeType: version.mimeType,
-      },
-    });
-  };
-
-  const handleOpenExternally = async (
+  const handleOpenFile = async (
     version: CaseDocumentVersion,
   ) => {
     try {
@@ -149,16 +128,11 @@ export default function DocumentVersionsScreen() {
         mimeType: version.mimeType,
       });
     } catch (requestError) {
-      console.log(
-        'Error abriendo archivo:',
-        requestError,
-      );
-
       Alert.alert(
         'No fue posible abrir el archivo',
         requestError instanceof Error
           ? requestError.message
-          : 'No hay una aplicación compatible instalada',
+          : 'No se encontró una aplicación compatible.',
       );
     } finally {
       setProcessingVersionId(null);
@@ -209,7 +183,10 @@ export default function DocumentVersionsScreen() {
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
-          onRefresh={handleRefresh}
+          onRefresh={() => {
+            setIsRefreshing(true);
+            void loadVersions();
+          }}
         />
       }
     >
@@ -219,34 +196,9 @@ export default function DocumentVersionsScreen() {
       </Text>
 
       <Text style={styles.subtitle}>
-        Consulta el historial de archivos
-        asociados a este documento.
+        Consulta y abre los archivos disponibles
+        en el expediente.
       </Text>
-
-      {documentId ? (
-        <Pressable
-          style={styles.newVersionButton}
-          onPress={() =>
-            router.push({
-              pathname:
-                '/(mediator)/cases/documents/new-version',
-              params: {
-                documentId,
-                documentName:
-                  documentName ?? '',
-              },
-            })
-          }
-        >
-          <Text
-            style={
-              styles.newVersionButtonText
-            }
-          >
-            Subir nueva versión
-          </Text>
-        </Pressable>
-      ) : null}
 
       {versions.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -266,24 +218,17 @@ export default function DocumentVersionsScreen() {
               style={styles.versionCard}
             >
               <View style={styles.versionHeader}>
-                <View style={styles.versionInfo}>
-                  <Text
-                    style={styles.versionTitle}
-                  >
-                    Versión{' '}
-                    {version.versionNumber}
+                <View style={styles.versionInformation}>
+                  <Text style={styles.versionTitle}>
+                    Versión {version.versionNumber}
                   </Text>
 
-                  <Text
-                    style={styles.fileName}
-                  >
+                  <Text style={styles.fileName}>
                     {version.originalName}
                   </Text>
                 </View>
 
-                <View
-                  style={styles.versionBadge}
-                >
+                <View style={styles.versionBadge}>
                   <Text
                     style={
                       styles.versionBadgeText
@@ -330,51 +275,29 @@ export default function DocumentVersionsScreen() {
                 </View>
               ) : null}
 
-              <View style={styles.actions}>
-                <Pressable
-                  disabled={isProcessing}
-                  style={styles.previewButton}
-                  onPress={() =>
-                    handlePreview(version)
-                  }
-                >
-                  <Text
-                    style={
-                      styles.previewButtonText
-                    }
-                  >
-                    Visualizar
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  disabled={isProcessing}
-                  style={[
-                    styles.openButton,
-                    isProcessing &&
+              <Pressable
+                disabled={isProcessing}
+                style={[
+                  styles.openButton,
+                  isProcessing &&
                     styles.disabledButton,
-                  ]}
-                  onPress={() =>
-                    void handleOpenExternally(
-                      version,
-                    )
-                  }
-                >
-                  {isProcessing ? (
-                    <ActivityIndicator
-                      color="#FFFFFF"
-                    />
-                  ) : (
-                    <Text
-                      style={
-                        styles.openButtonText
-                      }
-                    >
-                      Abrir archivo
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
+                ]}
+                onPress={() =>
+                  void handleOpenFile(version)
+                }
+              >
+                {isProcessing ? (
+                  <ActivityIndicator
+                    color="#FFFFFF"
+                  />
+                ) : (
+                  <Text
+                    style={styles.openButtonText}
+                  >
+                    Abrir con...
+                  </Text>
+                )}
+              </Pressable>
             </View>
           );
         })
@@ -408,8 +331,8 @@ const styles = StyleSheet.create({
   },
 
   errorText: {
-    color: '#C53030',
     textAlign: 'center',
+    color: '#C53030',
   },
 
   retryButton: {
@@ -435,19 +358,6 @@ const styles = StyleSheet.create({
     marginTop: 7,
     color: '#718096',
     lineHeight: 20,
-  },
-
-  newVersionButton: {
-    alignItems: 'center',
-    marginTop: 18,
-    paddingVertical: 13,
-    borderRadius: 10,
-    backgroundColor: '#1A365D',
-  },
-
-  newVersionButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
 
   emptyContainer: {
@@ -478,7 +388,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
 
-  versionInfo: {
+  versionInformation: {
     flex: 1,
   },
 
@@ -530,33 +440,11 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 
-  actions: {
-    flexDirection: 'row',
-    marginTop: 15,
-    gap: 9,
-  },
-
-  previewButton: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: '#2B6CB0',
-    borderRadius: 9,
-    backgroundColor: '#EBF8FF',
-  },
-
-  previewButtonText: {
-    color: '#2B6CB0',
-    fontWeight: '700',
-  },
-
   openButton: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 44,
+    minHeight: 45,
+    marginTop: 15,
     borderRadius: 9,
     backgroundColor: '#1A365D',
   },

@@ -385,4 +385,124 @@ export class CaseDocumentsService {
       mimeType: version.mimeType,
     };
   }
+
+  async archive(documentId: string, currentUser: AuthenticatedUser) {
+    const document = await this.findDocumentForManagement(
+      documentId,
+      currentUser,
+    );
+
+    if (document.status === CaseDocumentStatus.ARCHIVED) {
+      throw new ConflictException('El documento ya se encuentra archivado');
+    }
+
+    return this.prisma.caseDocument.update({
+      where: {
+        id: document.id,
+      },
+      data: {
+        status: CaseDocumentStatus.ARCHIVED,
+        archivedAt: new Date(),
+      },
+    });
+  }
+
+  async restore(documentId: string, currentUser: AuthenticatedUser) {
+    const document = await this.findDocumentForManagement(
+      documentId,
+      currentUser,
+    );
+
+    if (document.status !== CaseDocumentStatus.ARCHIVED) {
+      throw new ConflictException('El documento no se encuentra archivado');
+    }
+
+    return this.prisma.caseDocument.update({
+      where: {
+        id: document.id,
+      },
+      data: {
+        status: CaseDocumentStatus.ACTIVE,
+        archivedAt: null,
+      },
+    });
+  }
+
+  async remove(documentId: string, currentUser: AuthenticatedUser) {
+    const document = await this.findDocumentForManagement(
+      documentId,
+      currentUser,
+    );
+
+    if (document.status === CaseDocumentStatus.DELETED) {
+      throw new NotFoundException('Documento no encontrado');
+    }
+
+    return this.prisma.caseDocument.update({
+      where: {
+        id: document.id,
+      },
+      data: {
+        status: CaseDocumentStatus.DELETED,
+        deletedAt: new Date(),
+      },
+    });
+  }
+
+  private async findDocumentForManagement(
+    documentId: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    const document = await this.prisma.caseDocument.findFirst({
+      where: {
+        id: documentId,
+        status: {
+          not: CaseDocumentStatus.DELETED,
+        },
+        mediationCase: {
+          deletedAt: null,
+        },
+      },
+      select: {
+        id: true,
+        caseId: true,
+        status: true,
+        mediationCase: {
+          select: {
+            mediatorId: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (!document) {
+      throw new NotFoundException('Documento no encontrado');
+    }
+
+    const isAdmin = currentUser.role === Role.ADMIN;
+
+    const isAssignedMediator =
+      document.mediationCase.mediatorId === currentUser.userId;
+
+    if (!isAdmin && !isAssignedMediator) {
+      throw new ForbiddenException(
+        'No tienes permiso para administrar este documento',
+      );
+    }
+
+    const finalStatuses = [
+      'CLOSED_SUCCESS',
+      'CLOSED_NO_AGREEMENT',
+      'CANCELLED',
+    ];
+
+    if (finalStatuses.includes(document.mediationCase.status)) {
+      throw new ConflictException(
+        'No se pueden modificar documentos de un caso finalizado',
+      );
+    }
+
+    return document;
+  }
 }

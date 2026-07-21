@@ -54,6 +54,20 @@ export default function MediatorCasesLayout() {
           title: 'Versiones del documento',
         }}
       />
+
+      <Stack.Screen
+        name="documents/viewer"
+        options={{
+          title: 'Visualizar documento',
+        }}
+      />
+
+      <Stack.Screen
+        name="documents/new-version"
+        options={{
+          title: 'Nueva versión',
+        }}
+      />
     </Stack>
 
   );

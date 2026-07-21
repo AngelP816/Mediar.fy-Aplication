@@ -1,18 +1,19 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Res,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import {
-  FileInterceptor,
-} from '@nestjs/platform-express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -22,9 +23,8 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import type {
-  Response,
-} from 'express';
+import { createReadStream } from 'fs';
+import type { Response } from 'express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -42,14 +42,11 @@ import {
 @UseGuards(JwtAuthGuard)
 @Controller('documents')
 export class DocumentActionsController {
-  constructor(
-    private readonly caseDocumentsService: CaseDocumentsService,
-  ) {}
+  constructor(private readonly caseDocumentsService: CaseDocumentsService) {}
 
   @Post(':documentId/versions')
   @ApiOperation({
-    summary:
-      'Subir una nueva versión de un documento',
+    summary: 'Subir una nueva versión de un documento',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -68,25 +65,19 @@ export class DocumentActionsController {
     },
   })
   @ApiCreatedResponse({
-    description:
-      'Nueva versión creada correctamente',
+    description: 'Nueva versión creada correctamente',
   })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: caseDocumentStorage,
-      fileFilter:
-        caseDocumentFileFilter,
+      fileFilter: caseDocumentFileFilter,
       limits: {
         fileSize: 10 * 1024 * 1024,
       },
     }),
   )
   createVersion(
-    
-    @Param(
-      'documentId',
-      ParseUUIDPipe,
-    )
+    @Param('documentId', ParseUUIDPipe)
     documentId: string,
     @CurrentUser()
     currentUser: AuthenticatedUser,
@@ -94,7 +85,6 @@ export class DocumentActionsController {
     dto: CreateDocumentVersionDto,
     @UploadedFile()
     file?: Express.Multer.File,
-    
   ) {
     return this.caseDocumentsService.createVersion(
       documentId,
@@ -106,55 +96,126 @@ export class DocumentActionsController {
 
   @Get(':documentId/versions')
   @ApiOperation({
-    summary:
-      'Consultar versiones de un documento',
+    summary: 'Consultar versiones de un documento',
   })
   @ApiOkResponse({
-    description:
-      'Versiones obtenidas correctamente',
+    description: 'Versiones obtenidas correctamente',
   })
   findVersions(
-    @Param(
-      'documentId',
-      ParseUUIDPipe,
-    )
+    @Param('documentId', ParseUUIDPipe)
     documentId: string,
     @CurrentUser()
     currentUser: AuthenticatedUser,
   ) {
-    return this.caseDocumentsService.findVersions(
-      documentId,
-      currentUser,
-    );
+    return this.caseDocumentsService.findVersions(documentId, currentUser);
   }
 
   @Get('versions/:versionId/download')
   @ApiOperation({
-    summary:
-      'Descargar una versión de un documento',
+    summary: 'Descargar una versión de un documento',
   })
   async downloadVersion(
-    @Param(
-      'versionId',
-      ParseUUIDPipe,
-    )
+    @Param('versionId', ParseUUIDPipe)
     versionId: string,
     @CurrentUser()
     currentUser: AuthenticatedUser,
     @Res()
     response: Response,
   ) {
-    const file =
-      await this.caseDocumentsService.getVersionFile(
-        versionId,
-        currentUser,
-      );
+    const file = await this.caseDocumentsService.getVersionFile(
+      versionId,
+      currentUser,
+    );
 
     response.type(file.mimeType);
 
-    return response.download(
-      file.absolutePath,
-      file.originalName,
-    );
+    return response.download(file.absolutePath, file.originalName);
   }
+
+  @Get('versions/:versionId/preview')
+  @ApiOperation({
+    summary: 'Visualizar una versión de documento',
+  })
+  async previewVersion(
+    @Param('versionId', ParseUUIDPipe)
+    versionId: string,
+    @CurrentUser()
+    currentUser: AuthenticatedUser,
+    @Res({ passthrough: true })
+    response: Response,
+  ) {
+    const file = await this.caseDocumentsService.getVersionFile(
+      versionId,
+      currentUser,
+    );
+
+    response.set({
+      'Content-Type': file.mimeType,
+      'Content-Disposition': `inline; filename="${encodeURIComponent(
+        file.originalName,
+      )}"`,
+      'Cache-Control': 'private, no-store, max-age=0',
+    });
+
+    return new StreamableFile(createReadStream(file.absolutePath));
+  }
+
+  @Patch(':documentId/archive')
+@ApiOperation({
+  summary: 'Archivar un documento',
+})
+archive(
+  @Param(
+    'documentId',
+    ParseUUIDPipe,
+  )
+  documentId: string,
+  @CurrentUser()
+  currentUser: AuthenticatedUser,
+) {
+  return this.caseDocumentsService.archive(
+    documentId,
+    currentUser,
+  );
+}
+
+@Patch(':documentId/restore')
+@ApiOperation({
+  summary:
+    'Restaurar un documento archivado',
+})
+restore(
+  @Param(
+    'documentId',
+    ParseUUIDPipe,
+  )
+  documentId: string,
+  @CurrentUser()
+  currentUser: AuthenticatedUser,
+) {
+  return this.caseDocumentsService.restore(
+    documentId,
+    currentUser,
+  );
+}
+
+@Delete(':documentId')
+@ApiOperation({
+  summary:
+    'Eliminar lógicamente un documento',
+})
+remove(
+  @Param(
+    'documentId',
+    ParseUUIDPipe,
+  )
+  documentId: string,
+  @CurrentUser()
+  currentUser: AuthenticatedUser,
+) {
+  return this.caseDocumentsService.remove(
+    documentId,
+    currentUser,
+  );
+}
 }

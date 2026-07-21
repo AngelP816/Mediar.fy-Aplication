@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import axios from 'axios';
 import { casesService } from '../../../src/services/cases.service';
 import {
@@ -16,6 +16,16 @@ import {
 } from '../../../src/types/case.types';
 import { sessionsService } from '../../../src/services/sessions.service';
 import { MediationSession } from '../../../src/types/session.types';
+import { caseDocumentsService } from '../../../src/services/case-documents.service';
+
+import type {
+  CaseDocument,
+} from '../../../src/types/case-document.types';
+
+import {
+  documentTypeLabels,
+  formatFileSize,
+} from '../../../src/utils/case-document.util';
 
 const statusLabels: Record<CaseStatus, string> = {
   OPEN: 'Abierto',
@@ -53,6 +63,21 @@ export default function ClientCaseDetailScreen() {
   const [isLoadingSessions, setIsLoadingSessions] =
     useState(false);
 
+  const router = useRouter();
+
+  const [documents, setDocuments] =
+    useState<CaseDocument[]>([]);
+
+  const [
+    isLoadingDocuments,
+    setIsLoadingDocuments,
+  ] = useState(false);
+
+  const [
+    documentsError,
+    setDocumentsError,
+  ] = useState<string | null>(null);
+
   const loadCase = useCallback(async () => {
     if (!caseId) {
       setError('El caso no contiene un ID válido');
@@ -89,6 +114,36 @@ export default function ClientCaseDetailScreen() {
     }
   }, [caseId]);
 
+  const loadDocuments =
+    useCallback(async () => {
+      if (!caseId) {
+        return;
+      }
+
+      try {
+        setIsLoadingDocuments(true);
+        setDocumentsError(null);
+
+        const data =
+          await caseDocumentsService.getByCase(
+            caseId,
+          );
+
+        setDocuments(data);
+      } catch (error) {
+        console.log(
+          'Error cargando documentos del cliente:',
+          error,
+        );
+
+        setDocumentsError(
+          'No fue posible cargar los documentos del expediente.',
+        );
+      } finally {
+        setIsLoadingDocuments(false);
+      }
+    }, [caseId]);
+
   const loadSessions = useCallback(async () => {
     if (!caseId) {
       return;
@@ -115,7 +170,8 @@ export default function ClientCaseDetailScreen() {
     useCallback(() => {
       void loadCase();
       void loadSessions();
-    }, [loadCase, loadSessions]),
+      void loadDocuments();
+    }, [loadCase, loadSessions, loadDocuments]),
   );
 
   if (isLoading) {
@@ -295,6 +351,154 @@ export default function ClientCaseDetailScreen() {
           ))
         )}
       </Section>
+
+      <View style={styles.documentsSection}>
+        <Text style={styles.documentsSectionTitle}>
+          Documentos del expediente
+        </Text>
+
+        <Text style={styles.documentsSectionSubtitle}>
+          Consulta los documentos y sus versiones
+          disponibles.
+        </Text>
+
+        {isLoadingDocuments ? (
+          <ActivityIndicator
+            style={styles.documentsLoader}
+            color="#1A365D"
+          />
+        ) : documentsError ? (
+          <View style={styles.documentsErrorContainer}>
+            <Text style={styles.documentsErrorText}>
+              {documentsError}
+            </Text>
+
+            <Pressable
+              style={styles.retryDocumentsButton}
+              onPress={() =>
+                void loadDocuments()
+              }
+            >
+              <Text
+                style={
+                  styles.retryDocumentsButtonText
+                }
+              >
+                Reintentar
+              </Text>
+            </Pressable>
+          </View>
+        ) : documents.length === 0 ? (
+          <View style={styles.emptyDocumentsContainer}>
+            <Text style={styles.emptyDocumentsText}>
+              Todavía no se han agregado documentos
+              al expediente.
+            </Text>
+          </View>
+        ) : (
+          documents.map((document) => {
+            const currentFile =
+              document.versions[0];
+
+            return (
+              <View
+                key={document.id}
+                style={styles.documentCard}
+              >
+                <View style={styles.documentHeader}>
+                  <View style={styles.documentInformation}>
+                    <Text style={styles.documentName}>
+                      {document.name}
+                    </Text>
+
+                    <Text style={styles.documentType}>
+                      {
+                        documentTypeLabels[
+                        document.type
+                        ]
+                      }
+                    </Text>
+                  </View>
+
+                  <View
+                    style={styles.documentVersionBadge}
+                  >
+                    <Text
+                      style={
+                        styles.documentVersionBadgeText
+                      }
+                    >
+                      v{document.currentVersion}
+                    </Text>
+                  </View>
+                </View>
+
+                {document.description ? (
+                  <Text
+                    style={styles.documentDescription}
+                  >
+                    {document.description}
+                  </Text>
+                ) : null}
+
+                {currentFile ? (
+                  <View style={styles.currentFileContainer}>
+                    <Text style={styles.currentFileName}>
+                      {currentFile.originalName}
+                    </Text>
+
+                    <Text style={styles.currentFileDetail}>
+                      {formatFileSize(
+                        currentFile.sizeBytes,
+                      )}
+                    </Text>
+
+                    <Text style={styles.currentFileDetail}>
+                      Subido por:{' '}
+                      {currentFile.uploadedBy.firstName}{' '}
+                      {currentFile.uploadedBy.lastName}
+                    </Text>
+
+                    <Text style={styles.currentFileDetail}>
+                      {new Date(
+                        currentFile.createdAt,
+                      ).toLocaleString('es-MX')}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.missingFileText}>
+                    No se encontró información de la
+                    versión actual.
+                  </Text>
+                )}
+
+                <Pressable
+                  style={styles.viewVersionsButton}
+                  onPress={() =>
+                    router.push({
+                      pathname:
+                        '/(client)/cases/documents/[documentId]',
+                      params: {
+                        documentId: document.id,
+                        documentName:
+                          document.name,
+                      },
+                    })
+                  }
+                >
+                  <Text
+                    style={
+                      styles.viewVersionsButtonText
+                    }
+                  >
+                    Ver versiones
+                  </Text>
+                </Pressable>
+              </View>
+            );
+          })
+        )}
+      </View>
 
       <Section title="Historial del caso">
         {mediationCase.statusHistory.map(
@@ -570,5 +774,157 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontStyle: 'italic',
     color: '#718096',
+  },
+
+  documentsSection: {
+    marginTop: 18,
+    padding: 16,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+  },
+
+  documentsSectionTitle: {
+    fontSize: 19,
+    fontWeight: '700',
+    color: '#1A365D',
+  },
+
+  documentsSectionSubtitle: {
+    marginTop: 5,
+    color: '#718096',
+    lineHeight: 20,
+  },
+
+  documentsLoader: {
+    marginTop: 20,
+  },
+
+  documentsErrorContainer: {
+    alignItems: 'center',
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 10,
+    backgroundColor: '#FFF5F5',
+  },
+
+  documentsErrorText: {
+    textAlign: 'center',
+    color: '#C53030',
+  },
+
+  retryDocumentsButton: {
+    marginTop: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#1A365D',
+  },
+
+  retryDocumentsButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  emptyDocumentsContainer: {
+    alignItems: 'center',
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 10,
+    backgroundColor: '#F7FAFC',
+  },
+
+  emptyDocumentsText: {
+    textAlign: 'center',
+    color: '#718096',
+  },
+
+  documentCard: {
+    marginTop: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#F7FAFC',
+  },
+
+  documentHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+
+  documentInformation: {
+    flex: 1,
+  },
+
+  documentName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  documentType: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#2B6CB0',
+  },
+
+  documentVersionBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: '#EBF8FF',
+  },
+
+  documentVersionBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2C5282',
+  },
+
+  documentDescription: {
+    marginTop: 10,
+    color: '#4A5568',
+    lineHeight: 20,
+  },
+
+  currentFileContainer: {
+    marginTop: 12,
+    padding: 11,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+  },
+
+  currentFileName: {
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  currentFileDetail: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#718096',
+  },
+
+  missingFileText: {
+    marginTop: 12,
+    fontStyle: 'italic',
+    color: '#C53030',
+  },
+
+  viewVersionsButton: {
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: '#2B6CB0',
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+  },
+
+  viewVersionsButtonText: {
+    color: '#2B6CB0',
+    fontWeight: '700',
   },
 });

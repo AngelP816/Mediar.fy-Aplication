@@ -314,6 +314,11 @@ export default function MediatorCaseDetailScreen() {
     setIsLoadingDocuments,
   ] = useState(false);
 
+  const [
+    processingDocumentId,
+    setProcessingDocumentId,
+  ] = useState<string | null>(null);
+
   const loadInvitations =
     useCallback(async () => {
       if (!caseId) {
@@ -363,6 +368,168 @@ export default function MediatorCaseDetailScreen() {
         setIsLoadingDocuments(false);
       }
     }, [caseId]);
+
+  const getDocumentErrorMessage = (
+    requestError: unknown,
+    fallbackMessage: string,
+  ): string => {
+    if (axios.isAxiosError(requestError)) {
+      const apiMessage =
+        requestError.response?.data?.message;
+
+      if (Array.isArray(apiMessage)) {
+        return apiMessage.join('\n');
+      }
+
+      if (typeof apiMessage === 'string') {
+        return apiMessage;
+      }
+    }
+
+    return fallbackMessage;
+  };
+
+  const handleArchiveDocument = (
+    documentId: string,
+    documentName: string,
+  ) => {
+    Alert.alert(
+      'Archivar documento',
+      `¿Deseas archivar "${documentName}"? El documento seguirá disponible en el expediente.`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Archivar',
+          onPress: async () => {
+            try {
+              setProcessingDocumentId(
+                documentId,
+              );
+
+              await caseDocumentsService.archive(
+                documentId,
+              );
+
+              await loadDocuments();
+
+              Alert.alert(
+                'Documento archivado',
+                'El documento fue archivado correctamente.',
+              );
+            } catch (requestError) {
+              Alert.alert(
+                'No fue posible archivar',
+                getDocumentErrorMessage(
+                  requestError,
+                  'Ocurrió un error al archivar el documento.',
+                ),
+              );
+            } finally {
+              setProcessingDocumentId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleRestoreDocument = (
+    documentId: string,
+    documentName: string,
+  ) => {
+    Alert.alert(
+      'Restaurar documento',
+      `¿Deseas restaurar "${documentName}"?`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Restaurar',
+          onPress: async () => {
+            try {
+              setProcessingDocumentId(
+                documentId,
+              );
+
+              await caseDocumentsService.restore(
+                documentId,
+              );
+
+              await loadDocuments();
+
+              Alert.alert(
+                'Documento restaurado',
+                'El documento volvió a estar activo.',
+              );
+            } catch (requestError) {
+              Alert.alert(
+                'No fue posible restaurar',
+                getDocumentErrorMessage(
+                  requestError,
+                  'Ocurrió un error al restaurar el documento.',
+                ),
+              );
+            } finally {
+              setProcessingDocumentId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleDeleteDocument = (
+    documentId: string,
+    documentName: string,
+  ) => {
+    Alert.alert(
+      'Eliminar documento',
+      `¿Deseas eliminar "${documentName}" del expediente? Esta acción ocultará el documento para todos los participantes.`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setProcessingDocumentId(
+                documentId,
+              );
+
+              await caseDocumentsService.remove(
+                documentId,
+              );
+
+              await loadDocuments();
+
+              Alert.alert(
+                'Documento eliminado',
+                'El documento fue eliminado del expediente.',
+              );
+            } catch (requestError) {
+              Alert.alert(
+                'No fue posible eliminar',
+                getDocumentErrorMessage(
+                  requestError,
+                  'Ocurrió un error al eliminar el documento.',
+                ),
+              );
+            } finally {
+              setProcessingDocumentId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const handleUpdateSessionStatus = async () => {
     if (
@@ -880,6 +1047,14 @@ export default function MediatorCaseDetailScreen() {
                           document.type
                         ]}
                       </Text>
+                      {document.status === 'ARCHIVED' ? (
+                        <View style={styles.archivedBadge}>
+                          <Text style={styles.archivedBadgeText}>
+                            Archivado
+                          </Text>
+                        </View>
+                      ) : null}
+
                     </View>
 
                     <View
@@ -968,8 +1143,7 @@ export default function MediatorCaseDetailScreen() {
                           '/(mediator)/cases/documents/[documentId]',
                         params: {
                           documentId: document.id,
-                          documentName:
-                            document.name,
+                          documentName: document.name,
                         },
                       })
                     }
@@ -982,7 +1156,106 @@ export default function MediatorCaseDetailScreen() {
                       Ver versiones
                     </Text>
                   </Pressable>
+
+                  <View
+                    style={
+                      styles.documentManagementActions
+                    }
+                  >
+                    {document.status === 'ACTIVE' ? (
+                      <Pressable
+                        disabled={
+                          processingDocumentId ===
+                          document.id
+                        }
+                        style={[
+                          styles.archiveDocumentButton,
+                          processingDocumentId ===
+                          document.id &&
+                          styles.documentActionDisabled,
+                        ]}
+                        onPress={() =>
+                          handleArchiveDocument(
+                            document.id,
+                            document.name,
+                          )
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.archiveDocumentButtonText
+                          }
+                        >
+                          Archivar
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        disabled={
+                          processingDocumentId ===
+                          document.id
+                        }
+                        style={[
+                          styles.restoreDocumentButton,
+                          processingDocumentId ===
+                          document.id &&
+                          styles.documentActionDisabled,
+                        ]}
+                        onPress={() =>
+                          handleRestoreDocument(
+                            document.id,
+                            document.name,
+                          )
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.restoreDocumentButtonText
+                          }
+                        >
+                          Restaurar
+                        </Text>
+                      </Pressable>
+                    )}
+
+                    <Pressable
+                      disabled={
+                        processingDocumentId ===
+                        document.id
+                      }
+                      style={[
+                        styles.deleteDocumentButton,
+                        processingDocumentId ===
+                        document.id &&
+                        styles.documentActionDisabled,
+                      ]}
+                      onPress={() =>
+                        handleDeleteDocument(
+                          document.id,
+                          document.name,
+                        )
+                      }
+                    >
+                      {processingDocumentId ===
+                        document.id ? (
+                        <ActivityIndicator
+                          size="small"
+                          color="#C53030"
+                        />
+                      ) : (
+                        <Text
+                          style={
+                            styles.deleteDocumentButtonText
+                          }
+                        >
+                          Eliminar
+                        </Text>
+                      )}
+                    </Pressable>
+                  </View>
+
                 </View>
+
               );
             })
           )}
@@ -1981,5 +2254,80 @@ const styles = StyleSheet.create({
   viewVersionsButtonText: {
     color: '#2B6CB0',
     fontWeight: '700',
+  },
+  archivedBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 14,
+    backgroundColor: '#EDF2F7',
+  },
+
+  archivedBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4A5568',
+  },
+
+  documentManagementActions: {
+    flexDirection: 'row',
+    marginTop: 10,
+    gap: 8,
+  },
+
+  archiveDocumentButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 43,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#718096',
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+  },
+
+  archiveDocumentButtonText: {
+    color: '#4A5568',
+    fontWeight: '700',
+  },
+
+  restoreDocumentButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 43,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#2F855A',
+    borderRadius: 9,
+    backgroundColor: '#F0FFF4',
+  },
+
+  restoreDocumentButtonText: {
+    color: '#2F855A',
+    fontWeight: '700',
+  },
+
+  deleteDocumentButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 43,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#C53030',
+    borderRadius: 9,
+    backgroundColor: '#FFF5F5',
+  },
+
+  deleteDocumentButtonText: {
+    color: '#C53030',
+    fontWeight: '700',
+  },
+
+  documentActionDisabled: {
+    opacity: 0.5,
   },
 });

@@ -26,6 +26,13 @@ export default function ClientCasesLayout() {
           title: 'Detalle del caso',
         }}
       />
+
+      <Stack.Screen
+        name="documents/[documentId]"
+        options={{
+          title: 'Versiones del documento',
+        }}
+      />
     </Stack>
   );
 }
