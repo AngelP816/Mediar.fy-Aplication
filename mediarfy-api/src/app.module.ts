@@ -8,6 +8,7 @@ import { MediationRequestsModule } from './mediation-requests/mediation-requests
 import { CasesModule } from './cases/cases.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SessionsService } from './sessions/sessions.service';
+import { CaseInvitationsModule } from './case-invitations/case-invitations.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { SessionsService } from './sessions/sessions.service';
     MediationRequestsModule,
     CasesModule,
     SessionsModule,
+    CaseInvitationsModule,
   ],
 })
 export class AppModule {}

@@ -19,6 +19,12 @@ import {
 } from '../../../src/types/case.types';
 import { sessionsService } from '../../../src/services/sessions.service';
 import { MediationSession, SessionStatus } from '../../../src/types/session.types';
+import { caseInvitationsService } from '../../../src/services/case-invitations.service';
+import {
+  CaseInvitation,
+  CaseInvitationStatus,
+  InvitationParticipantRole,
+} from '../../../src/types/case-invitation.types';
 
 interface SessionAction {
   label: string;
@@ -98,6 +104,27 @@ const statusLabels: Record<CaseStatus, string> = {
   CLOSED_SUCCESS: 'Cerrado con acuerdo',
   CLOSED_NO_AGREEMENT: 'Cerrado sin acuerdo',
   CANCELLED: 'Cancelado',
+};
+
+const invitationStatusLabels: Record<
+  CaseInvitationStatus,
+  string
+> = {
+  PENDING: 'Pendiente',
+  ACCEPTED: 'Aceptada',
+  REJECTED: 'Rechazada',
+  EXPIRED: 'Vencida',
+  CANCELLED: 'Cancelada',
+};
+
+const invitationRoleLabels: Record<
+  InvitationParticipantRole,
+  string
+> = {
+  INVITED_PARTY: 'Parte invitada',
+  LEGAL_REPRESENTATIVE: 'Representante legal',
+  LAWYER: 'Abogado',
+  OBSERVER: 'Observador',
 };
 
 interface CaseAction {
@@ -260,6 +287,39 @@ export default function MediatorCaseDetailScreen() {
 
   const [isUpdatingSession, setIsUpdatingSession] =
     useState(false);
+
+  const [invitations, setInvitations] =
+    useState<CaseInvitation[]>([]);
+
+  const [
+    isLoadingInvitations,
+    setIsLoadingInvitations,
+  ] = useState(false);
+
+  const loadInvitations =
+    useCallback(async () => {
+      if (!caseId) {
+        return;
+      }
+
+      try {
+        setIsLoadingInvitations(true);
+
+        const data =
+          await caseInvitationsService.getByCase(
+            caseId,
+          );
+
+        setInvitations(data);
+      } catch (requestError) {
+        console.log(
+          'Error cargando invitaciones:',
+          requestError,
+        );
+      } finally {
+        setIsLoadingInvitations(false);
+      }
+    }, [caseId]);
 
   const handleUpdateSessionStatus = async () => {
     if (
@@ -445,7 +505,8 @@ export default function MediatorCaseDetailScreen() {
     useCallback(() => {
       void loadCase();
       void loadSessions();
-    }, [loadCase, loadSessions]),
+      void loadInvitations();
+    }, [loadCase, loadSessions, loadInvitations]),
   );
 
   if (isLoading) {
@@ -614,6 +675,110 @@ export default function MediatorCaseDetailScreen() {
           </Section>
         )}
 
+        <Section title="Invitaciones">
+          <Pressable
+            style={styles.inviteButton}
+            onPress={() =>
+              router.push({
+                pathname:
+                  '/(mediator)/cases/invite',
+                params: {
+                  caseId,
+                },
+              })
+            }
+          >
+            <Text style={styles.inviteButtonText}>
+              Invitar participante
+            </Text>
+          </Pressable>
+
+          {isLoadingInvitations ? (
+            <ActivityIndicator
+              style={styles.invitationsLoader}
+            />
+          ) : invitations.length === 0 ? (
+            <Text style={styles.emptyInvitationsText}>
+              Todavía no se han creado invitaciones.
+            </Text>
+          ) : (
+            invitations.map((invitation) => (
+              <View
+                key={invitation.id}
+                style={styles.invitationCard}
+              >
+                <View style={styles.invitationHeader}>
+                  <View style={styles.invitationPerson}>
+                    <Text style={styles.invitationName}>
+                      {invitation.firstName}{' '}
+                      {invitation.lastName}
+                    </Text>
+
+                    <Text style={styles.invitationEmail}>
+                      {invitation.email}
+                    </Text>
+                  </View>
+
+                  <View
+                    style={[
+                      styles.invitationBadge,
+                      invitation.status === 'ACCEPTED'
+                        ? styles.acceptedInvitationBadge
+                        : invitation.status ===
+                          'PENDING'
+                          ? styles.pendingInvitationBadge
+                          : styles.inactiveInvitationBadge,
+                    ]}
+                  >
+                    <Text
+                      style={
+                        styles.invitationBadgeText
+                      }
+                    >
+                      {
+                        invitationStatusLabels[
+                        invitation.status
+                        ]
+                      }
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.invitationDetail}>
+                  Rol:{' '}
+                  {
+                    invitationRoleLabels[
+                    invitation.participantRole
+                    ]
+                  }
+                </Text>
+
+                {invitation.phone ? (
+                  <Text style={styles.invitationDetail}>
+                    Teléfono: {invitation.phone}
+                  </Text>
+                ) : null}
+
+                <Text style={styles.invitationDetail}>
+                  Creada:{' '}
+                  {new Date(
+                    invitation.createdAt,
+                  ).toLocaleString('es-MX')}
+                </Text>
+
+                {invitation.status === 'PENDING' ? (
+                  <Text style={styles.invitationExpiration}>
+                    Vence:{' '}
+                    {new Date(
+                      invitation.expiresAt,
+                    ).toLocaleString('es-MX')}
+                  </Text>
+                ) : null}
+              </View>
+            ))
+          )}
+        </Section>
+
         <Section title="Agenda">
           <Pressable
             style={styles.scheduleButton}
@@ -722,7 +887,7 @@ export default function MediatorCaseDetailScreen() {
                     }
                   >
                     <Text style={styles.rescheduleButtonText}>
-                      Reprogramar sesión 
+                      Reprogramar sesión
                     </Text>
                   </Pressable>
                 ) : null}
@@ -1404,5 +1569,94 @@ const styles = StyleSheet.create({
   rescheduleButtonText: {
     color: '#2B6CB0',
     fontWeight: '700',
+  },
+
+  inviteButton: {
+    alignItems: 'center',
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#1A365D',
+  },
+
+  inviteButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  invitationsLoader: {
+    marginTop: 18,
+  },
+
+  emptyInvitationsText: {
+    marginTop: 16,
+    color: '#718096',
+    textAlign: 'center',
+  },
+
+  invitationCard: {
+    marginTop: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 11,
+    backgroundColor: '#F7FAFC',
+  },
+
+  invitationHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+
+  invitationPerson: {
+    flex: 1,
+  },
+
+  invitationName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2D3748',
+  },
+
+  invitationEmail: {
+    marginTop: 4,
+    color: '#718096',
+  },
+
+  invitationBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 16,
+  },
+
+  pendingInvitationBadge: {
+    backgroundColor: '#FEFCBF',
+  },
+
+  acceptedInvitationBadge: {
+    backgroundColor: '#C6F6D5',
+  },
+
+  inactiveInvitationBadge: {
+    backgroundColor: '#E2E8F0',
+  },
+
+  invitationBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4A5568',
+  },
+
+  invitationDetail: {
+    marginTop: 8,
+    color: '#4A5568',
+  },
+
+  invitationExpiration: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#975A16',
   },
 });

@@ -33,6 +33,13 @@ export default function MediatorCasesLayout() {
           title: 'Reprogramar sesión',
         }}
       />
+
+      <Stack.Screen
+        name="invite"
+        options={{
+          title: 'Invitar participante',
+        }}
+      />
     </Stack>
 
   );

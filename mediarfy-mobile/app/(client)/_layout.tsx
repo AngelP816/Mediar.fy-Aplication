@@ -60,6 +60,20 @@ export default function ClientLayout() {
           ),
         }}
       />
+
+      <Tabs.Screen
+        name="invitations"
+        options={{
+          title: 'Invitaciones',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons
+              name="person-add-outline"
+              color={color}
+              size={size}
+            />
+          ),
+        }}
+      />
     </Tabs>
   );
 }
