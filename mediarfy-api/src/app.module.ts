@@ -10,6 +10,9 @@ import { SessionsModule } from './sessions/sessions.module';
 import { SessionsService } from './sessions/sessions.service';
 import { CaseInvitationsModule } from './case-invitations/case-invitations.module';
 import { CaseDocumentsModule } from './case-documents/case-documents.module';
+import { NotificationsController } from './notifications/notifications.controller';
+import { NotificationsService } from './notifications/notifications.service';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -25,6 +28,9 @@ import { CaseDocumentsModule } from './case-documents/case-documents.module';
     SessionsModule,
     CaseInvitationsModule,
     CaseDocumentsModule,
+    NotificationsModule,
   ],
+  controllers: [NotificationsController],
+  providers: [NotificationsService],
 })
 export class AppModule {}

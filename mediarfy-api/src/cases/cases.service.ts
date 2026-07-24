@@ -13,6 +13,9 @@ import {
 import { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateCaseStatusDto } from './dto/update-case-status.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+
+import { NotificationType } from '../generated/prisma/enums';
 
 @Injectable()
 export class CasesService {
@@ -63,7 +66,10 @@ export class CasesService {
     [CaseStatus.CANCELLED]: [],
   };
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   generateFolio(): string {
     const year = new Date().getFullYear();
@@ -259,7 +265,7 @@ export class CasesService {
 
     const shouldCloseCase = finalStatuses.includes(dto.status);
 
-    return this.prisma.$transaction(async (transaction) => {
+    const updatedCase = await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.mediationCase.updateMany({
         where: {
           id: caseId,
@@ -293,7 +299,7 @@ export class CasesService {
         },
       });
 
-      return transaction.mediationCase.findUnique({
+      return transaction.mediationCase.findUniqueOrThrow({
         where: {
           id: caseId,
         },
@@ -347,6 +353,70 @@ export class CasesService {
         },
       });
     });
+
+    await this.notifyCaseUsers(
+      updatedCase.id,
+      NotificationType.CASE_STATUS_CHANGED,
+      'Estado del caso actualizado',
+      `El caso ${updatedCase.folio} cambió a ${updatedCase.status}.`,
+      {
+        previousStatus: mediationCase.status,
+        newStatus: updatedCase.status,
+        folio: updatedCase.folio,
+      },
+    );
+
+    return updatedCase;
+  }
+
+  private async notifyCaseUsers(
+    caseId: string,
+    type: NotificationType,
+    title: string,
+    message: string,
+    metadata?: Record<string, string | number | boolean | null>,
+  ) {
+    const mediationCase = await this.prisma.mediationCase.findUnique({
+      where: {
+        id: caseId,
+      },
+      select: {
+        id: true,
+        clientId: true,
+        mediatorId: true,
+        participants: {
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    if (!mediationCase) {
+      return;
+    }
+
+    const userIds = new Set<string>();
+
+    userIds.add(mediationCase.clientId);
+    userIds.add(mediationCase.mediatorId);
+
+    mediationCase.participants.forEach((participant) => {
+      if (participant.userId) {
+        userIds.add(participant.userId);
+      }
+    });
+
+    await this.notificationsService.createMany(
+      Array.from(userIds).map((userId) => ({
+        userId,
+        type,
+        title,
+        message,
+        caseId,
+        metadata,
+      })),
+    );
   }
 
   private getDefaultStatusComment(status: CaseStatus): string {

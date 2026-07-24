@@ -16,6 +16,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { RescheduleSessionDto } from './dto/reschedule-session.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+
+import { NotificationType } from '../generated/prisma/enums';
 
 @Injectable()
 export class SessionsService {
@@ -46,7 +49,10 @@ export class SessionsService {
       [SessionStatus.NO_SHOW]: [],
     };
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(
     caseId: string,
@@ -81,8 +87,13 @@ export class SessionsService {
 
     const scheduledAt = new Date(dto.scheduledAt);
 
-    if (scheduledAt.getTime() <= Date.now()) {
-      throw new BadRequestException('La fecha de la sesión debe ser futura');
+    if (
+      Number.isNaN(scheduledAt.getTime()) ||
+      scheduledAt.getTime() <= Date.now()
+    ) {
+      throw new BadRequestException(
+        'La fecha de la sesión debe ser válida y futura',
+      );
     }
 
     if (dto.modality === SessionModality.IN_PERSON && !dto.location?.trim()) {
@@ -118,7 +129,7 @@ export class SessionsService {
       );
     }
 
-    return this.prisma.$transaction(async (transaction) => {
+    const session = await this.prisma.$transaction(async (transaction) => {
       const session = await transaction.mediationSession.create({
         data: {
           caseId,
@@ -168,6 +179,18 @@ export class SessionsService {
 
       return session;
     });
+
+    await this.notifySessionUsers(
+      session.caseId,
+      NotificationType.SESSION_CREATED,
+      'Nueva sesión programada',
+      `Se programó la sesión "${session.title}" para ${session.scheduledAt.toLocaleString(
+        'es-MX',
+      )}.`,
+      session.id,
+    );
+
+    return session;
   }
 
   async findByCase(caseId: string, currentUser: AuthenticatedUser) {
@@ -273,69 +296,82 @@ export class SessionsService {
       );
     }
 
-    return this.prisma.$transaction(async (transaction) => {
-      const updated = await transaction.mediationSession.updateMany({
-        where: {
-          id: sessionId,
-          status: session.status,
-        },
-        data: {
-          status: dto.status,
-          cancelledAt:
-            dto.status === SessionStatus.CANCELLED ? new Date() : null,
-        },
-      });
-
-      if (updated.count !== 1) {
-        throw new ConflictException(
-          'La sesión fue modificada por otro usuario',
-        );
-      }
-
-      const updatedSession = await transaction.mediationSession.findUnique({
-        where: {
-          id: sessionId,
-        },
-        include: {
-          createdBy: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              role: true,
-            },
-          },
-        },
-      });
-
-      if (
-        dto.status === SessionStatus.COMPLETED &&
-        session.mediationCase.status === CaseStatus.SESSION_SCHEDULED
-      ) {
-        await transaction.mediationCase.update({
+    const updatedSession = await this.prisma.$transaction(
+      async (transaction) => {
+        const updated = await transaction.mediationSession.updateMany({
           where: {
-            id: session.mediationCase.id,
+            id: sessionId,
+            status: session.status,
           },
           data: {
-            status: CaseStatus.IN_MEDIATION,
+            status: dto.status,
+            cancelledAt:
+              dto.status === SessionStatus.CANCELLED ? new Date() : null,
           },
         });
 
-        await transaction.caseStatusHistory.create({
-          data: {
-            caseId: session.mediationCase.id,
-            changedById: currentUser.userId,
-            fromStatus: CaseStatus.SESSION_SCHEDULED,
-            toStatus: CaseStatus.IN_MEDIATION,
-            comment:
-              dto.comment?.trim() ||
-              'La sesión fue completada y el caso inició la mediación',
-          },
-        });
-      }
+        if (updated.count !== 1) {
+          throw new ConflictException(
+            'La sesión fue modificada por otro usuario',
+          );
+        }
 
-      return updatedSession;
-    });
+        const updatedSession =
+          await transaction.mediationSession.findUniqueOrThrow({
+            where: {
+              id: sessionId,
+            },
+            include: {
+              createdBy: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  role: true,
+                },
+              },
+            },
+          });
+
+        if (
+          dto.status === SessionStatus.COMPLETED &&
+          session.mediationCase.status === CaseStatus.SESSION_SCHEDULED
+        ) {
+          await transaction.mediationCase.update({
+            where: {
+              id: session.mediationCase.id,
+            },
+            data: {
+              status: CaseStatus.IN_MEDIATION,
+            },
+          });
+
+          await transaction.caseStatusHistory.create({
+            data: {
+              caseId: session.mediationCase.id,
+              changedById: currentUser.userId,
+              fromStatus: CaseStatus.SESSION_SCHEDULED,
+              toStatus: CaseStatus.IN_MEDIATION,
+              comment:
+                dto.comment?.trim() ||
+                'La sesión fue completada y el caso inició la mediación',
+            },
+          });
+        }
+
+        return updatedSession;
+      },
+    );
+
+    await this.notifySessionUsers(
+      updatedSession.caseId,
+      NotificationType.SESSION_STATUS_CHANGED,
+      'Estado de sesión actualizado',
+      `La sesión "${updatedSession.title}" cambió a ${updatedSession.status}.`,
+      updatedSession.id,
+    );
+
+    return updatedSession;
   }
 
   async reschedule(
@@ -398,43 +434,106 @@ export class SessionsService {
       );
     }
 
-    return this.prisma.$transaction(async (transaction) => {
-      const updated = await transaction.mediationSession.updateMany({
-        where: {
-          id: sessionId,
-          status: session.status,
-          scheduledAt: session.scheduledAt,
-        },
-        data: {
-          scheduledAt: newScheduledAt,
-          durationMinutes: dto.durationMinutes ?? session.durationMinutes,
-          status: SessionStatus.RESCHEDULED,
-          cancelledAt: null,
-          notes: dto.comment?.trim() || session.notes,
-        },
-      });
+    const updatedSession = await this.prisma.$transaction(
+      async (transaction) => {
+        const updated = await transaction.mediationSession.updateMany({
+          where: {
+            id: sessionId,
+            status: session.status,
+            scheduledAt: session.scheduledAt,
+          },
+          data: {
+            scheduledAt: newScheduledAt,
+            durationMinutes: dto.durationMinutes ?? session.durationMinutes,
+            status: SessionStatus.RESCHEDULED,
+            cancelledAt: null,
+            notes: dto.comment?.trim() || session.notes,
+          },
+        });
 
-      if (updated.count !== 1) {
-        throw new ConflictException(
-          'La sesión fue modificada por otro usuario',
-        );
-      }
+        if (updated.count !== 1) {
+          throw new ConflictException(
+            'La sesión fue modificada por otro usuario',
+          );
+        }
 
-      return transaction.mediationSession.findUnique({
-        where: {
-          id: sessionId,
-        },
-        include: {
-          createdBy: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              role: true,
+        return transaction.mediationSession.findUniqueOrThrow({
+          where: {
+            id: sessionId,
+          },
+          include: {
+            createdBy: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+              },
             },
           },
+        });
+      },
+    );
+
+    await this.notifySessionUsers(
+      updatedSession.caseId,
+      NotificationType.SESSION_RESCHEDULED,
+      'Sesión reprogramada',
+      `La sesión "${updatedSession.title}" fue reprogramada para ${updatedSession.scheduledAt.toLocaleString(
+        'es-MX',
+      )}.`,
+      updatedSession.id,
+    );
+
+    return updatedSession;
+  }
+
+  private async notifySessionUsers(
+    caseId: string,
+    type: NotificationType,
+    title: string,
+    message: string,
+    sessionId: string,
+  ) {
+    const mediationCase = await this.prisma.mediationCase.findUnique({
+      where: {
+        id: caseId,
+      },
+      select: {
+        clientId: true,
+        mediatorId: true,
+        participants: {
+          select: {
+            userId: true,
+          },
         },
-      });
+      },
     });
+
+    if (!mediationCase) {
+      return;
+    }
+
+    const userIds = new Set<string>([
+      mediationCase.clientId,
+      mediationCase.mediatorId,
+    ]);
+
+    mediationCase.participants.forEach((participant) => {
+      if (participant.userId) {
+        userIds.add(participant.userId);
+      }
+    });
+
+    await this.notificationsService.createMany(
+      Array.from(userIds).map((userId) => ({
+        userId,
+        type,
+        title,
+        message,
+        caseId,
+        sessionId,
+      })),
+    );
   }
 }

@@ -115,6 +115,28 @@ enum CaseDocumentStatus {
   DELETED
 }
 
+enum NotificationType {
+  CASE_STATUS_CHANGED
+  SESSION_CREATED
+  SESSION_RESCHEDULED
+  SESSION_STATUS_CHANGED
+  INVITATION_CREATED
+  INVITATION_ACCEPTED
+  INVITATION_REJECTED
+  DOCUMENT_CREATED
+  DOCUMENT_VERSION_CREATED
+  DOCUMENT_ARCHIVED
+  DOCUMENT_RESTORED
+  DOCUMENT_DELETED
+  GENERAL
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
 model User {
   id           String     @id @default(uuid())
   email        String     @unique
@@ -129,6 +151,7 @@ model User {
   lastLoginAt     DateTime?
 
   refreshTokens RefreshToken[]
+  notifications Notification[]
 
   clientRequests       MediationRequest[]     @relation("ClientRequests")
   assignedRequests     MediationRequest[]     @relation("MediatorRequests")
@@ -453,4 +476,35 @@ model CaseDocumentVersion {
   @@index([documentId])
   @@index([uploadedById])
   @@map("case_document_versions")
+}
+
+model Notification {
+  id String @id @default(uuid())
+
+  userId String
+
+  type   NotificationType
+  status NotificationStatus @default(UNREAD)
+
+  title   String
+  message String
+
+  caseId       String?
+  sessionId    String?
+  invitationId String?
+  documentId   String?
+
+  metadata Json?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime  @default(now())
+  readAt     DateTime?
+  archivedAt DateTime?
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([createdAt])
+  @@index([caseId])
+  @@map("notifications")
 }

@@ -7,17 +7,23 @@ import {
 import { randomBytes } from 'crypto';
 
 import {
+  CaseStatus,
   CaseInvitationStatus,
   CaseParticipantRole,
+  NotificationType,
   Role,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 import { CreateCaseInvitationDto } from './dto/create-case-invitation.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class CaseInvitationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(
     caseId: string,
@@ -31,6 +37,7 @@ export class CaseInvitationsService {
       },
       select: {
         id: true,
+        folio: true,
         mediatorId: true,
         status: true,
         participants: {
@@ -57,10 +64,10 @@ export class CaseInvitationsService {
       );
     }
 
-    const closedStatuses = [
-      'CLOSED_SUCCESS',
-      'CLOSED_NO_AGREEMENT',
-      'CANCELLED',
+    const closedStatuses: CaseStatus[] = [
+      CaseStatus.CLOSED_SUCCESS,
+      CaseStatus.CLOSED_NO_AGREEMENT,
+      CaseStatus.CANCELLED,
     ];
 
     if (closedStatuses.includes(mediationCase.status)) {
@@ -139,7 +146,7 @@ export class CaseInvitationsService {
 
     expiresAt.setDate(expiresAt.getDate() + 7);
 
-    return this.prisma.caseInvitation.create({
+    const invitation = await this.prisma.caseInvitation.create({
       data: {
         caseId,
         invitedById: currentUser.userId,
@@ -163,6 +170,20 @@ export class CaseInvitationsService {
         },
       },
     });
+
+    await this.notificationsService.create({
+      userId: invitedUser.id,
+      type: NotificationType.INVITATION_CREATED,
+      title: 'Nueva invitación a un caso',
+      message: `Has recibido una invitación para participar en el caso ${mediationCase.folio}.`,
+      caseId,
+      invitationId: invitation.id,
+      metadata: {
+        role: invitation.participantRole,
+      },
+    });
+
+    return invitation;
   }
 
   async findByCase(caseId: string, currentUser: AuthenticatedUser) {
@@ -364,17 +385,17 @@ export class CaseInvitationsService {
       throw new ConflictException('La invitación ha expirado');
     }
 
-    const finalCaseStatuses = [
-      'CLOSED_SUCCESS',
-      'CLOSED_NO_AGREEMENT',
-      'CANCELLED',
+    const finalCaseStatuses: CaseStatus[] = [
+      CaseStatus.CLOSED_SUCCESS,
+      CaseStatus.CLOSED_NO_AGREEMENT,
+      CaseStatus.CANCELLED,
     ];
 
     if (finalCaseStatuses.includes(invitation.mediationCase.status)) {
       throw new ConflictException('El caso ya se encuentra finalizado');
     }
 
-    return this.prisma.$transaction(async (transaction) => {
+    const result = await this.prisma.$transaction(async (transaction) => {
       const existingParticipant = await transaction.caseParticipant.findFirst({
         where: {
           caseId: invitation.caseId,
@@ -452,6 +473,17 @@ export class CaseInvitationsService {
         participant,
       };
     });
+
+    await this.notificationsService.create({
+      userId: invitation.invitedById,
+      type: NotificationType.INVITATION_ACCEPTED,
+      title: 'Invitación aceptada',
+      message: `${user.firstName} ${user.lastName} aceptó la invitación al caso.`,
+      caseId: invitation.caseId,
+      invitationId: invitation.id,
+    });
+
+    return result;
   }
 
   async reject(invitationId: string, currentUser: AuthenticatedUser) {
@@ -525,20 +557,32 @@ export class CaseInvitationsService {
       );
     }
 
-    return this.prisma.caseInvitation.findUnique({
-      where: {
-        id: invitation.id,
-      },
-      include: {
-        mediationCase: {
-          select: {
-            id: true,
-            folio: true,
-            title: true,
-            status: true,
+    const rejectedInvitation =
+      await this.prisma.caseInvitation.findUniqueOrThrow({
+        where: {
+          id: invitation.id,
+        },
+        include: {
+          mediationCase: {
+            select: {
+              id: true,
+              folio: true,
+              title: true,
+              status: true,
+            },
           },
         },
-      },
+      });
+
+    await this.notificationsService.create({
+      userId: invitation.invitedById,
+      type: NotificationType.INVITATION_REJECTED,
+      title: 'Invitación rechazada',
+      message: 'La invitación para participar en el caso fue rechazada.',
+      caseId: invitation.caseId,
+      invitationId: invitation.id,
     });
+
+    return rejectedInvitation;
   }
 }
