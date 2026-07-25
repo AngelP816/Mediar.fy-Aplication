@@ -1,0 +1,505 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+
+import {
+  CaseParticipantRole,
+  ChatConversationStatus,
+  ChatMessageType,
+  Role,
+} from '../generated/prisma/enums';
+
+import type { ChatConversation } from '../generated/prisma/client';
+
+import type { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
+
+import { PrismaService } from '../prisma/prisma.service';
+
+import { SendChatMessageDto } from './dto/send-chat-message.dto';
+
+@Injectable()
+export class ChatService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getOrCreateCaseConversation(
+    caseId: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    await this.validateCaseAccess(caseId, currentUser);
+
+    const existingConversation = await this.prisma.chatConversation.findUnique({
+      where: {
+        caseId,
+      },
+      include: this.conversationInclude,
+    });
+
+    if (existingConversation) {
+      await this.synchronizeParticipants(existingConversation.id, caseId);
+
+      return this.findConversationById(existingConversation.id, currentUser);
+    }
+
+    const participantUserIds = await this.getCaseParticipantUserIds(caseId);
+
+    const conversation = await this.prisma.chatConversation.create({
+      data: {
+        caseId,
+        participants: {
+          create: participantUserIds.map((userId) => ({
+            userId,
+          })),
+        },
+      },
+      include: this.conversationInclude,
+    });
+
+    return conversation;
+  }
+
+  async findConversationById(
+    conversationId: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    await this.validateConversationAccess(conversationId, currentUser);
+
+    const conversation = await this.prisma.chatConversation.findUnique({
+      where: {
+        id: conversationId,
+      },
+      include: this.conversationInclude,
+    });
+
+    if (!conversation) {
+      throw new NotFoundException('Conversación no encontrada');
+    }
+
+    return conversation;
+  }
+
+  async findMessages(
+    conversationId: string,
+    currentUser: AuthenticatedUser,
+    limit = 50,
+    before?: string,
+  ) {
+    await this.validateConversationAccess(conversationId, currentUser);
+
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException(
+        'El límite debe ser un entero entre 1 y 100',
+      );
+    }
+
+    let beforeDate: Date | undefined;
+
+    if (before) {
+      beforeDate = new Date(before);
+
+      if (Number.isNaN(beforeDate.getTime())) {
+        throw new BadRequestException(
+          'El parámetro before no contiene una fecha válida',
+        );
+      }
+    }
+
+    const messages = await this.prisma.chatMessage.findMany({
+      where: {
+        conversationId,
+        ...(beforeDate
+          ? {
+              createdAt: {
+                lt: beforeDate,
+              },
+            }
+          : {}),
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            role: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          createdAt: 'desc',
+        },
+        {
+          id: 'desc',
+        },
+      ],
+      take: limit,
+    });
+
+    return {
+      messages: messages.reverse(),
+      hasMore: messages.length === limit,
+      nextBefore:
+        messages.length > 0 ? messages[0].createdAt.toISOString() : null,
+    };
+  }
+
+  async sendMessage(
+    conversationId: string,
+    dto: SendChatMessageDto,
+    currentUser: AuthenticatedUser,
+  ) {
+    const conversation = await this.validateConversationAccess(
+      conversationId,
+      currentUser,
+    );
+
+    if (conversation.status !== ChatConversationStatus.ACTIVE) {
+      throw new BadRequestException('La conversación no está activa');
+    }
+
+    const content = dto.content.trim();
+
+    if (!content) {
+      throw new BadRequestException('El mensaje no puede estar vacío');
+    }
+
+    const message = await this.prisma.chatMessage.create({
+      data: {
+        conversationId,
+        senderId: currentUser.userId,
+        type: ChatMessageType.TEXT,
+        content,
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            role: true,
+          },
+        },
+      },
+    });
+
+    await this.prisma.chatParticipant.updateMany({
+      where: {
+        conversationId,
+        userId: currentUser.userId,
+        isActive: true,
+      },
+      data: {
+        lastReadAt: new Date(),
+      },
+    });
+
+    return message;
+  }
+
+  async markAsRead(conversationId: string, currentUser: AuthenticatedUser) {
+    await this.validateConversationAccess(conversationId, currentUser);
+
+    const now = new Date();
+
+    const result = await this.prisma.chatParticipant.updateMany({
+      where: {
+        conversationId,
+        userId: currentUser.userId,
+        isActive: true,
+      },
+      data: {
+        lastReadAt: now,
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new NotFoundException('Participante del chat no encontrado');
+    }
+
+    return {
+      readAt: now,
+    };
+  }
+
+  async countUnread(conversationId: string, currentUser: AuthenticatedUser) {
+    const participant = await this.prisma.chatParticipant.findFirst({
+      where: {
+        conversationId,
+        userId: currentUser.userId,
+        isActive: true,
+      },
+      select: {
+        lastReadAt: true,
+      },
+    });
+
+    if (!participant) {
+      throw new ForbiddenException('No tienes acceso a esta conversación');
+    }
+
+    const count = await this.prisma.chatMessage.count({
+      where: {
+        conversationId,
+        senderId: {
+          not: currentUser.userId,
+        },
+        createdAt: participant.lastReadAt
+          ? {
+              gt: participant.lastReadAt,
+            }
+          : undefined,
+      },
+    });
+
+    return {
+      count,
+    };
+  }
+
+  private async validateCaseAccess(
+    caseId: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    const mediationCase = await this.prisma.mediationCase.findUnique({
+      where: {
+        id: caseId,
+      },
+      select: {
+        id: true,
+        clientId: true,
+        mediatorId: true,
+        participants: {
+          where: {
+            userId: {
+              not: null,
+            },
+          },
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    if (!mediationCase) {
+      throw new NotFoundException('Caso no encontrado');
+    }
+
+    if (currentUser.role === Role.ADMIN) {
+      return mediationCase;
+    }
+
+    if (
+      currentUser.role === Role.MEDIATOR &&
+      mediationCase.mediatorId === currentUser.userId
+    ) {
+      return mediationCase;
+    }
+
+    if (
+      currentUser.role === Role.CLIENT &&
+      mediationCase.clientId === currentUser.userId
+    ) {
+      return mediationCase;
+    }
+
+    const isParticipant = mediationCase.participants.some(
+      (participant) => participant.userId === currentUser.userId,
+    );
+
+    if (currentUser.role === Role.CLIENT && isParticipant) {
+      return mediationCase;
+    }
+
+    throw new ForbiddenException('No tienes acceso al chat de este caso');
+  }
+
+  private async validateConversationAccess(
+    conversationId: string,
+    currentUser: AuthenticatedUser,
+  ): Promise<ChatConversation> {
+    const conversation = await this.prisma.chatConversation.findUnique({
+      where: {
+        id: conversationId,
+      },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException('Conversación no encontrada');
+    }
+
+    if (currentUser.role === Role.ADMIN) {
+      return conversation;
+    }
+
+    const participant = await this.prisma.chatParticipant.findFirst({
+      where: {
+        conversationId,
+        userId: currentUser.userId,
+        isActive: true,
+      },
+    });
+
+    if (!participant) {
+      throw new ForbiddenException('No tienes acceso a esta conversación');
+    }
+
+    return conversation;
+  }
+
+  private async synchronizeParticipants(
+    conversationId: string,
+    caseId: string,
+  ): Promise<void> {
+    const authorizedUserIds = await this.getCaseParticipantUserIds(caseId);
+
+    if (authorizedUserIds.length === 0) {
+      return;
+    }
+
+    await this.prisma.$transaction(
+      authorizedUserIds.map((userId) =>
+        this.prisma.chatParticipant.upsert({
+          where: {
+            conversationId_userId: {
+              conversationId,
+              userId,
+            },
+          },
+          update: {
+            isActive: true,
+            leftAt: null,
+          },
+          create: {
+            conversationId,
+            userId,
+          },
+        }),
+      ),
+    );
+  }
+
+  private async getCaseParticipantUserIds(caseId: string): Promise<string[]> {
+    const mediationCase = await this.prisma.mediationCase.findUnique({
+      where: {
+        id: caseId,
+      },
+      select: {
+        clientId: true,
+        mediatorId: true,
+        participants: {
+          where: {
+            userId: {
+              not: null,
+            },
+          },
+          select: {
+            userId: true,
+            role: true,
+          },
+        },
+      },
+    });
+
+    if (!mediationCase) {
+      throw new NotFoundException('Caso no encontrado');
+    }
+
+    const userIds = new Set<string>();
+
+    userIds.add(mediationCase.clientId);
+    userIds.add(mediationCase.mediatorId);
+
+    mediationCase.participants.forEach((participant) => {
+      if (participant.userId && this.isChatParticipantRole(participant.role)) {
+        userIds.add(participant.userId);
+      }
+    });
+
+    return [...userIds];
+  }
+
+  private isChatParticipantRole(role: CaseParticipantRole): boolean {
+    const allowedRoles = new Set<CaseParticipantRole>([
+      CaseParticipantRole.REQUESTING_PARTY,
+      CaseParticipantRole.INVITED_PARTY,
+      CaseParticipantRole.LEGAL_REPRESENTATIVE,
+      CaseParticipantRole.LAWYER,
+    ]);
+
+    return allowedRoles.has(role);
+  }
+
+  private readonly conversationInclude = {
+    case: {
+      select: {
+        id: true,
+        folio: true,
+        title: true,
+        status: true,
+      },
+    },
+    participants: {
+      where: {
+        isActive: true,
+      },
+      select: {
+        id: true,
+        userId: true,
+        joinedAt: true,
+        lastReadAt: true,
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            role: true,
+          },
+        },
+      },
+    },
+  } as const;
+
+  async validateSocketConversationAccess(
+    conversationId: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    return this.validateConversationAccess(conversationId, currentUser);
+  }
+
+  async sendSocketMessage(
+    conversationId: string,
+    content: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    return this.sendMessage(
+      conversationId,
+      {
+        content,
+      },
+      currentUser,
+    );
+  }
+
+  async getConversationParticipantUserIds(
+    conversationId: string,
+  ): Promise<string[]> {
+    const participants = await this.prisma.chatParticipant.findMany({
+      where: {
+        conversationId,
+        isActive: true,
+      },
+      select: {
+        userId: true,
+      },
+    });
+
+    return participants.map((participant) => participant.userId);
+  }
+}

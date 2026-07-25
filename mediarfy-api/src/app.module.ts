@@ -15,6 +15,7 @@ import { NotificationsService } from './notifications/notifications.service';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PushTokensModule } from './push-tokens/push-tokens.module';
 import { PushNotificationsModule } from './push-notifications/push-notifications.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PushNotificationsModule } from './push-notifications/push-notifications
     NotificationsModule,
     PushTokensModule,
     PushNotificationsModule,
+    ChatModule,
   ],
   controllers: [NotificationsController],
   providers: [NotificationsService],
