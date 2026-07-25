@@ -1,6 +1,8 @@
-import axios, {
+import {
   AxiosError,
+  create,
   InternalAxiosRequestConfig,
+  isAxiosError,
 } from 'axios';
 import { tokenStorage } from './token-storage.service';
 
@@ -21,7 +23,7 @@ interface RefreshResponse {
   refreshToken: string;
 }
 
-export const api = axios.create({
+export const api = create({
   baseURL: API_URL,
   timeout: 10000,
   headers: {
@@ -33,7 +35,7 @@ export const api = axios.create({
  * Cliente separado para renovar la sesión.
  * Así evitamos que el interceptor se llame a sí mismo.
  */
-const refreshApi = axios.create({
+const refreshApi = create({
   baseURL: API_URL,
   timeout: 10000,
   headers: {
@@ -139,7 +141,20 @@ api.interceptors.response.use(
 
       return api(originalRequest);
     } catch (refreshError) {
-      await tokenStorage.clearTokens();
+      if (
+        isAxiosError(refreshError) &&
+        refreshError.response &&
+        [400, 401, 403].includes(refreshError.response.status)
+      ) {
+        try {
+          await tokenStorage.clearTokens();
+        } catch (storageError) {
+          console.log(
+            'No fue posible eliminar los tokens rechazados:',
+            storageError,
+          );
+        }
+      }
 
       return Promise.reject(refreshError);
     }

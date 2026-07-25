@@ -179,6 +179,7 @@ export default function ClientCasesScreen() {
                 ).toLocaleDateString()}
               </Text>
             </Pressable>
+            
           )}
         />
       )}

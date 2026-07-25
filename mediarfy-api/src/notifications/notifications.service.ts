@@ -14,6 +14,7 @@ import {
 import { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsGateway } from './notifications.gateway';
+import { PushNotificationsService } from '../push-notifications/push-notifications.service';
 
 interface CreateNotificationData {
   userId: string;
@@ -36,6 +37,7 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly pushNotificationsService: PushNotificationsService,
   ) {}
 
   async create(data: CreateNotificationData) {
@@ -245,17 +247,63 @@ export class NotificationsService {
   private async emitRealtimeUpdates(
     notifications: Notification[],
   ): Promise<void> {
+    if (notifications.length === 0) {
+      return;
+    }
+
     notifications.forEach((notification) => {
       try {
         this.notificationsGateway.emitNotification(notification);
       } catch (error) {
-        this.logRealtimeWarning('notificación', error);
+        this.logRealtimeWarning('notificación por WebSocket', error);
       }
     });
 
     await this.emitUnreadCounts(
       notifications.map((notification) => notification.userId),
     );
+
+    const pushResults = await Promise.allSettled(
+      notifications.map((notification) =>
+        this.pushNotificationsService.sendToUser({
+          userId: notification.userId,
+
+          title: notification.title,
+
+          body: notification.message,
+
+          data: {
+            notificationId: notification.id,
+
+            type: notification.type,
+
+            caseId: notification.caseId,
+
+            sessionId: notification.sessionId,
+
+            invitationId: notification.invitationId,
+
+            documentId: notification.documentId,
+          },
+        }),
+      ),
+    );
+
+    pushResults.forEach((result, index) => {
+      if (result.status !== 'rejected') {
+        return;
+      }
+
+      const notification = notifications[index];
+
+      this.logger.warn(
+        `No se pudo enviar la notificación push ${notification?.id ?? ''}: ${
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason)
+        }`,
+      );
+    });
   }
 
   private async emitUnreadCounts(userIds: string[]): Promise<void> {

@@ -1,4 +1,4 @@
-import NotificationsScreen from '../../../src/screens/NotificationsScreen';
+import NotificationsScreen from '../../src/screens/NotificationsScreen';
 
 export default function ClientNotificationsScreen() {
   return (

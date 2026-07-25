@@ -35,6 +35,10 @@ import {
   notificationTypeLabels,
 } from '../utils/notification.util';
 
+import {
+  useNotificationsStore,
+} from '../stores/notifications.store';
+
 interface NotificationsScreenProps {
   role: 'client' | 'mediator';
 }
@@ -44,10 +48,47 @@ export default function NotificationsScreen({
 }: NotificationsScreenProps) {
   const router = useRouter();
 
-  const [
-    notifications,
-    setNotifications,
-  ] = useState<AppNotification[]>([]);
+  const notifications =
+    useNotificationsStore(
+      (state) =>
+        state.notifications,
+    );
+
+  const setNotifications =
+    useNotificationsStore(
+      (state) =>
+        state.setNotifications,
+    );
+
+  const updateNotification =
+    useNotificationsStore(
+      (state) =>
+        state.updateNotification,
+    );
+
+  const removeNotification =
+    useNotificationsStore(
+      (state) =>
+        state.removeNotification,
+    );
+
+  const unreadCount =
+    useNotificationsStore(
+      (state) =>
+        state.unreadCount,
+    );
+
+  const setUnreadCount =
+    useNotificationsStore(
+      (state) =>
+        state.setUnreadCount,
+    );
+
+  const isSocketConnected =
+    useNotificationsStore(
+      (state) =>
+        state.isSocketConnected,
+    );
 
   const [isLoading, setIsLoading] =
     useState(true);
@@ -65,16 +106,6 @@ export default function NotificationsScreen({
 
   const [error, setError] =
     useState<string | null>(null);
-
-  const unreadCount = useMemo(
-    () =>
-      notifications.filter(
-        (notification) =>
-          notification.status ===
-          'UNREAD',
-      ).length,
-    [notifications],
-  );
 
   const loadNotifications =
     useCallback(async () => {
@@ -131,15 +162,12 @@ export default function NotificationsScreen({
           notification.id,
         );
 
-      setNotifications(
-        (currentNotifications) =>
-          currentNotifications.map(
-            (currentNotification) =>
-              currentNotification.id ===
-              updated.id
-                ? updated
-                : currentNotification,
-          ),
+      updateNotification(updated);
+      setUnreadCount(
+        Math.max(
+          unreadCount - 1,
+          0,
+        ),
       );
     };
 
@@ -148,7 +176,7 @@ export default function NotificationsScreen({
   ) => {
     if (
       notification.type ===
-        'INVITATION_CREATED' &&
+      'INVITATION_CREATED' &&
       role === 'client'
     ) {
       router.push(
@@ -206,7 +234,7 @@ export default function NotificationsScreen({
             typeof requestError.response
               ?.data?.message === 'string'
             ? requestError.response.data
-                .message
+              .message
             : 'Ocurrió un error inesperado.',
         );
       } finally {
@@ -231,19 +259,21 @@ export default function NotificationsScreen({
           new Date().toISOString();
 
         setNotifications(
-          (currentNotifications) =>
-            currentNotifications.map(
-              (notification) =>
-                notification.status ===
+          notifications.map(
+            (notification) =>
+              notification.status ===
                 'UNREAD'
-                  ? {
-                      ...notification,
-                      status: 'READ',
-                      readAt,
-                    }
-                  : notification,
-            ),
+                ? {
+                  ...notification,
+                  status:
+                    'READ' as const,
+                  readAt,
+                }
+                : notification,
+          ),
         );
+
+        setUnreadCount(0);
       } catch (requestError) {
         Alert.alert(
           'No fue posible actualizar',
@@ -251,7 +281,7 @@ export default function NotificationsScreen({
             typeof requestError.response
               ?.data?.message === 'string'
             ? requestError.response.data
-                .message
+              .message
             : 'No fue posible marcar las notificaciones como leídas.',
         );
       } finally {
@@ -282,14 +312,20 @@ export default function NotificationsScreen({
                 notification.id,
               );
 
-              setNotifications(
-                (currentNotifications) =>
-                  currentNotifications.filter(
-                    (currentNotification) =>
-                      currentNotification.id !==
-                      notification.id,
-                  ),
+              removeNotification(
+                notification.id,
               );
+              if (
+                notification.status ===
+                'UNREAD'
+              ) {
+                setUnreadCount(
+                  Math.max(
+                    unreadCount - 1,
+                    0,
+                  ),
+                );
+              }
             } catch (requestError) {
               Alert.alert(
                 'No fue posible archivar',
@@ -300,7 +336,7 @@ export default function NotificationsScreen({
                     .response?.data
                     ?.message === 'string'
                   ? requestError.response
-                      .data.message
+                    .data.message
                   : 'Ocurrió un error al archivar la notificación.',
               );
             } finally {
@@ -380,11 +416,10 @@ export default function NotificationsScreen({
           <Text style={styles.subtitle}>
             {unreadCount === 0
               ? 'No tienes notificaciones pendientes.'
-              : `${unreadCount} notificación${
-                  unreadCount === 1
-                    ? ''
-                    : 'es'
-                } sin leer.`}
+              : `${unreadCount} notificación${unreadCount === 1
+                ? ''
+                : 'es'
+              } sin leer.`}
           </Text>
         </View>
 
@@ -394,7 +429,7 @@ export default function NotificationsScreen({
             style={[
               styles.markAllButton,
               isMarkingAll &&
-                styles.disabledButton,
+              styles.disabledButton,
             ]}
             onPress={() =>
               void handleMarkAllAsRead()
@@ -450,7 +485,7 @@ export default function NotificationsScreen({
                 style={[
                   styles.notificationCard,
                   isUnread &&
-                    styles.unreadNotificationCard,
+                  styles.unreadNotificationCard,
                 ]}
               >
                 <Pressable
@@ -473,7 +508,7 @@ export default function NotificationsScreen({
                       style={[
                         styles.symbolContainer,
                         isUnread &&
-                          styles.unreadSymbolContainer,
+                        styles.unreadSymbolContainer,
                       ]}
                     >
                       <Text
@@ -501,7 +536,7 @@ export default function NotificationsScreen({
                           style={[
                             styles.notificationTitle,
                             isUnread &&
-                              styles.unreadNotificationTitle,
+                            styles.unreadNotificationTitle,
                           ]}
                         >
                           {notification.title}
@@ -523,7 +558,7 @@ export default function NotificationsScreen({
                       >
                         {
                           notificationTypeLabels[
-                            notification.type
+                          notification.type
                           ]
                         }
                       </Text>

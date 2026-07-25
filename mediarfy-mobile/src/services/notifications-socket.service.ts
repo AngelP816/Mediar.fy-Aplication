@@ -3,17 +3,13 @@ import {
   Socket,
 } from 'socket.io-client';
 
-import * as SecureStore from 'expo-secure-store';
-
 import type {
   AppNotification,
 } from '../types/notification.types';
+import { tokenStorage } from './token-storage.service';
 
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL;
-
-const ACCESS_TOKEN_KEY =
-  'accessToken';
 
 interface NotificationSocketEvents {
   onNotification?: (
@@ -56,9 +52,7 @@ export async function connectNotificationsSocket(
   }
 
   const token =
-    await SecureStore.getItemAsync(
-      ACCESS_TOKEN_KEY,
-    );
+    await tokenStorage.getAccessToken();
 
   if (!token) {
     throw new Error(
@@ -139,4 +133,4 @@ export function disconnectNotificationsSocket(): void {
   socket?.removeAllListeners();
   socket?.disconnect();
   socket = null;
-}   
+}

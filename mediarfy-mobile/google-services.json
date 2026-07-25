@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "323033139530",
+    "project_id": "mediarfy-app",
+    "storage_bucket": "mediarfy-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:323033139530:android:ed0eb4a9396eb5d93b19b3",
+        "android_client_info": {
+          "package_name": "com.mediarfy.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCcXVbCOHSSJ1k7z0Jl4__69NIS-g5sNuA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

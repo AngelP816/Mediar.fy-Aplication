@@ -1,12 +1,12 @@
-import axios from 'axios';
-import { create } from 'zustand';
-import { authService } from '../services/auth.service';
-import { tokenStorage } from '../services/token-storage.service';
-import {
-  AuthUser,
-  LoginData,
-  RegisterData,
-} from '../types/auth.types';
+import { isAxiosError } from "axios";
+import { create } from "zustand";
+
+import { authService } from "../services/auth.service";
+import { disconnectNotificationsSocket } from "../services/notifications-socket.service";
+import { tokenStorage } from "../services/token-storage.service";
+import type { AuthUser, LoginData, RegisterData } from "../types/auth.types";
+import { useNotificationsStore } from "./notifications.store";
+import { unregisterCurrentDevicePushToken } from "../services/push-notifications.service";
 
 interface AuthState {
   user: AuthUser | null;
@@ -23,30 +23,45 @@ interface AuthState {
 }
 
 function getErrorMessage(error: unknown): string {
-  if (axios.isAxiosError(error)) {
+  if (isAxiosError(error)) {
     const responseMessage = error.response?.data?.message;
 
     if (Array.isArray(responseMessage)) {
-      return responseMessage.join('\n');
+      return responseMessage.join("\n");
     }
 
-    if (typeof responseMessage === 'string') {
+    if (typeof responseMessage === "string") {
       return responseMessage;
     }
 
-    if (error.code === 'ECONNABORTED') {
-      return 'La conexión tardó demasiado';
+    if (error.code === "ECONNABORTED") {
+      return "La conexión tardó demasiado";
     }
 
     if (!error.response) {
-      return 'No fue posible conectar con el servidor';
+      return "No fue posible conectar con el servidor";
     }
   }
 
-  return 'Ocurrió un error inesperado';
+  return "Ocurrió un error inesperado";
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+function clearNotificationsSession(): void {
+  disconnectNotificationsSocket();
+  useNotificationsStore.getState().clearNotifications();
+}
+
+async function clearStoredTokens(): Promise<void> {
+  try {
+    await tokenStorage.clearTokens();
+  } catch (error) {
+    console.log("No fue posible eliminar los tokens locales:", error);
+  }
+}
+
+let initializationPromise: Promise<void> | null = null;
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isAuthenticated: false,
   isInitializing: true,
@@ -54,72 +69,70 @@ export const useAuthStore = create<AuthState>((set) => ({
   error: null,
 
   initialize: async () => {
-    set({
-      isInitializing: true,
-      error: null,
-    });
+    if (initializationPromise) {
+      return initializationPromise;
+    }
 
-    try {
-      const accessToken =
-        await tokenStorage.getAccessToken();
+    const currentInitialization = (async () => {
+      set({
+        isInitializing: true,
+        error: null,
+      });
 
-      const refreshToken =
-        await tokenStorage.getRefreshToken();
+      try {
+        const [accessToken, refreshToken] = await Promise.all([
+          tokenStorage.getAccessToken(),
+          tokenStorage.getRefreshToken(),
+        ]);
 
-      if (!accessToken || !refreshToken) {
-        await tokenStorage.clearTokens();
+        if (!accessToken || !refreshToken) {
+          await clearStoredTokens();
+          clearNotificationsSession();
+
+          set({
+            user: null,
+            isAuthenticated: false,
+          });
+
+          return;
+        }
+
+        // El interceptor renueva el token y reintenta el perfil ante un 401.
+        const user = await authService.getProfile();
+
+        set({
+          user,
+          isAuthenticated: true,
+        });
+      } catch (error) {
+        console.log("No fue posible restaurar la sesión:", error);
+        clearNotificationsSession();
 
         set({
           user: null,
           isAuthenticated: false,
-          isInitializing: false,
         });
-
-        return;
+      } finally {
+        set({ isInitializing: false });
       }
+    })();
 
-      try {
-        const user = await authService.getProfile();
+    initializationPromise = currentInitialization;
 
-        set({
-          user,
-          isAuthenticated: true,
-          isInitializing: false,
-        });
-      } catch {
-        const refreshed =
-          await authService.refresh(refreshToken);
-
-        await tokenStorage.saveTokens(
-          refreshed.accessToken,
-          refreshed.refreshToken,
-        );
-
-        const user = await authService.getProfile();
-
-        set({
-          user,
-          isAuthenticated: true,
-          isInitializing: false,
-        });
+    try {
+      await currentInitialization;
+    } finally {
+      if (initializationPromise === currentInitialization) {
+        initializationPromise = null;
       }
-    } catch (error) {
-      console.log(
-        'No fue posible restaurar la sesión:',
-        error,
-      );
-
-      await tokenStorage.clearTokens();
-
-      set({
-        user: null,
-        isAuthenticated: false,
-        isInitializing: false,
-      });
     }
   },
 
   login: async (data) => {
+    if (get().isInitializing || get().isSubmitting) {
+      return;
+    }
+
     set({
       isSubmitting: true,
       error: null,
@@ -136,29 +149,30 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({
         user: response.user,
         isAuthenticated: true,
-        isSubmitting: false,
       });
     } catch (error) {
       set({
-        user: null,
-        isAuthenticated: false,
-        isSubmitting: false,
         error: getErrorMessage(error),
       });
 
       throw error;
+    } finally {
+      set({ isSubmitting: false });
     }
   },
 
   register: async (data) => {
+    if (get().isInitializing || get().isSubmitting) {
+      return;
+    }
+
     set({
       isSubmitting: true,
       error: null,
     });
 
     try {
-      const response =
-        await authService.register(data);
+      const response = await authService.register(data);
 
       await tokenStorage.saveTokens(
         response.accessToken,
@@ -168,40 +182,61 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({
         user: response.user,
         isAuthenticated: true,
-        isSubmitting: false,
       });
     } catch (error) {
       set({
-        user: null,
-        isAuthenticated: false,
-        isSubmitting: false,
         error: getErrorMessage(error),
       });
 
       throw error;
+    } finally {
+      set({ isSubmitting: false });
     }
   },
 
   logout: async () => {
+    if (get().isInitializing || get().isSubmitting) {
+      return;
+    }
+
     set({
       isSubmitting: true,
       error: null,
     });
 
     try {
-      const refreshToken =
-        await tokenStorage.getRefreshToken();
-
-      if (refreshToken) {
-        await authService.logout(refreshToken);
+      /*
+       * Se ejecuta mientras el access token
+       * todavía se encuentra disponible.
+       */
+      try {
+        await unregisterCurrentDevicePushToken();
+      } catch (error) {
+        console.log("No fue posible desregistrar el token push:", error);
       }
-    } catch (error) {
-      console.log(
-        'No fue posible cerrar la sesión en el servidor:',
-        error,
-      );
+
+      /*
+       * Después se cierra la sesión del backend
+       * usando el refresh token.
+       */
+      try {
+        const refreshToken = await tokenStorage.getRefreshToken();
+
+        if (refreshToken) {
+          await authService.logout(refreshToken);
+        }
+      } catch (error) {
+        console.log("No fue posible cerrar la sesión en el servidor:", error);
+      }
     } finally {
-      await tokenStorage.clearTokens();
+      /*
+       * Finalmente se desconecta el socket,
+       * se limpian las notificaciones y eliminamos
+       * las credenciales locales.
+       */
+      clearNotificationsSession();
+
+      await clearStoredTokens();
 
       set({
         user: null,

@@ -1,11 +1,13 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  useUnreadNotifications,
-} from '../../src/hooks/use-unread-notifications';  
+import { useNotificationsStore } from '../../src/stores/notifications.store';
 
 export default function ClientLayout() {
-  const { unreadCount } = useUnreadNotifications();
+  const unreadCount =
+    useNotificationsStore(
+      (state) =>
+        state.unreadCount,
+    );
   return (
     <Tabs
       screenOptions={{
@@ -82,11 +84,30 @@ export default function ClientLayout() {
       <Tabs.Screen
         name="notifications"
         options={{
-          title: 'Notificaciones',
-          headerShown: false,
+          title: 'Avisos',
 
-          tabBarBadge: 
-            unreadCount > 0 ? unreadCount > 99 ? '99+' : unreadCount : undefined,
+          tabBarIcon: ({
+            color,
+            size,
+            focused,
+          }) => (
+            <Ionicons
+              name={
+                focused
+                  ? 'notifications'
+                  : 'notifications-outline'
+              }
+              color={color}
+              size={size}
+            />
+          ),
+
+          tabBarBadge:
+            unreadCount > 0
+              ? unreadCount > 99
+                ? '99+'
+                : unreadCount
+              : undefined,
         }}
       />
     </Tabs>

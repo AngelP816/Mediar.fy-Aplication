@@ -13,6 +13,8 @@ import { CaseDocumentsModule } from './case-documents/case-documents.module';
 import { NotificationsController } from './notifications/notifications.controller';
 import { NotificationsService } from './notifications/notifications.service';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PushTokensModule } from './push-tokens/push-tokens.module';
+import { PushNotificationsModule } from './push-notifications/push-notifications.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { NotificationsModule } from './notifications/notifications.module';
     CaseInvitationsModule,
     CaseDocumentsModule,
     NotificationsModule,
+    PushTokensModule,
+    PushNotificationsModule,
   ],
   controllers: [NotificationsController],
   providers: [NotificationsService],
