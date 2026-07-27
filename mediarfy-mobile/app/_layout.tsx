@@ -6,6 +6,7 @@ import {
   View,
 } from 'react-native';
 import { useAuthStore } from '../src/stores/auth.store';
+import { useChatStore } from '../src/stores/chat.store';
 import { useNotificationsSocket } from '../src/hooks/use-notifications-socket';
 import * as Notifications from 'expo-notifications';
 import { registerCurrentDevicePushToken } from '../src/services/push-notifications.service';
@@ -19,7 +20,6 @@ Notifications.setNotificationHandler({
     shouldSetBadge: true,
   }),
 });
-
 export default function RootLayout() {
   const isInitializing = useAuthStore(
     (state) => state.isInitializing,
@@ -34,6 +34,11 @@ export default function RootLayout() {
   const initialize = useAuthStore(
     (state) => state.initialize,
   );
+
+  const loadUnreadCount =
+    useChatStore(
+      (state) => state.loadUnreadCount,
+    );
 
   useNotificationsSocket({
     enabled: !isInitializing && isAuthenticated && user !== null,
@@ -76,10 +81,12 @@ export default function RootLayout() {
       };
 
     void registerPushToken();
+    void loadUnreadCount();
   }, [
     isInitializing,
     isAuthenticated,
-    user?.id,
+    user,
+    loadUnreadCount,
   ]);
 
   if (isInitializing) {

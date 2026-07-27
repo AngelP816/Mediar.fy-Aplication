@@ -1,12 +1,17 @@
-import { Tabs } from 'expo-router';
+import { Tabs, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useNotificationsStore } from '../../src/stores/notifications.store';
+import { useChatStore } from '../../src/stores/chat.store';
 
 export default function ClientLayout() {
   const unreadCount =
     useNotificationsStore(
       (state) =>
         state.unreadCount,
+    );
+  const chatUnreadCount =
+    useChatStore(
+      (state) => state.unreadCount,
     );
   return (
     <Tabs
@@ -51,12 +56,22 @@ export default function ClientLayout() {
             />
           ),
         }}
+        listeners={{
+          tabPress: (event) => {
+            event.preventDefault();
+            router.replace('/(client)/requests');
+          }
+        }}
       />
 
       <Tabs.Screen
         name="cases"
         options={{
           title: 'Casos',
+          tabBarBadge:
+            chatUnreadCount > 0
+              ? chatUnreadCount
+              : undefined,
           tabBarIcon: ({ color, size }) => (
             <Ionicons
               name="folder-open-outline"
@@ -64,6 +79,12 @@ export default function ClientLayout() {
               size={size}
             />
           ),
+        }}
+        listeners={{
+          tabPress: (event) => {
+            event.preventDefault();
+            router.replace('/(client)/cases');
+          }
         }}
       />
 
@@ -78,6 +99,12 @@ export default function ClientLayout() {
               size={size}
             />
           ),
+        }}
+        listeners={{
+          tabPress: (event) => {
+            event.preventDefault();
+            router.replace('/(client)/invitations');
+          }
         }}
       />
 

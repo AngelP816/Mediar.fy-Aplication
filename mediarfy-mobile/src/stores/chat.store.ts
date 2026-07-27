@@ -13,22 +13,38 @@ import {
 
 import type {
   ChatConversation,
+  ChatConversationSummary,
   ChatMessage,
   ChatReadEvent,
 } from "../types/chat.types";
+import { useAuthStore } from "./auth.store";
 
 interface ChatState {
   conversation: ChatConversation | null;
   messages: ChatMessage[];
+  conversations: ChatConversationSummary[];
 
   isLoading: boolean;
   isLoadingMore: boolean;
   isSending: boolean;
   isConnected: boolean;
+  isLoadingConversations: boolean;
+  isLoadingMoreConversations: boolean;
 
   hasMore: boolean;
   nextBefore: string | null;
   error: string | null;
+  conversationsError: string | null;
+  hasMoreConversations: boolean;
+
+  unreadCount: number;
+
+  loadUnreadCount: () => Promise<void>;
+  setUnreadCount: (count: number) => void;
+
+  loadConversations: () => Promise<void>;
+
+  loadMoreConversations: () => Promise<void>;
 
   openCaseChat: (caseId: string) => Promise<ChatConversation>;
 
@@ -66,18 +82,184 @@ function addMessageWithoutDuplicates(
   );
 }
 
+const CONVERSATIONS_PAGE_SIZE = 50;
+
+function sortConversationSummaries(
+  conversations: ChatConversationSummary[],
+): ChatConversationSummary[] {
+  return [...conversations].sort((first, second) => {
+    const firstDate =
+      first.lastMessage?.createdAt ?? first.updatedAt;
+    const secondDate =
+      second.lastMessage?.createdAt ?? second.updatedAt;
+
+    const dateDifference =
+      new Date(secondDate).getTime() - new Date(firstDate).getTime();
+
+    return dateDifference || second.id.localeCompare(first.id);
+  });
+}
+
+function updateConversationSummaries(
+  conversations: ChatConversationSummary[],
+  message: ChatMessage,
+  currentUserId: string | undefined,
+  activeConversationId: string | undefined,
+): ChatConversationSummary[] {
+  return sortConversationSummaries(
+    conversations.map((conversation) => {
+      if (conversation.id !== message.conversationId) {
+        return conversation;
+      }
+
+      const shouldIncrementUnread =
+        message.senderId !== currentUserId &&
+        message.conversationId !== activeConversationId;
+
+      return {
+        ...conversation,
+        updatedAt: message.createdAt,
+        lastMessage: message,
+        unreadCount: shouldIncrementUnread
+          ? conversation.unreadCount + 1
+          : conversation.unreadCount,
+      };
+    }),
+  );
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversation: null,
   messages: [],
+  conversations: [],
 
   isLoading: false,
   isLoadingMore: false,
   isSending: false,
   isConnected: false,
+  isLoadingConversations: false,
+  isLoadingMoreConversations: false,
+  unreadCount: 0,
 
   hasMore: false,
   nextBefore: null,
   error: null,
+  conversationsError: null,
+  hasMoreConversations: false,
+
+  loadConversations: async () => {
+    if (get().isLoadingConversations) {
+      return;
+    }
+
+    set({
+      isLoadingConversations: true,
+      conversationsError: null,
+      conversations: [],
+      hasMoreConversations: false,
+    });
+
+    try {
+      const conversations = await chatService.getConversations({
+        limit: CONVERSATIONS_PAGE_SIZE,
+        offset: 0,
+      });
+
+      set({
+        conversations,
+        hasMoreConversations:
+          conversations.length === CONVERSATIONS_PAGE_SIZE,
+      });
+
+      const socket = await connectChatSocket();
+
+      socket.off("message:created");
+
+      socket.on("message:created", (message) => {
+        const currentUserId = useAuthStore.getState().user?.id;
+        const activeConversationId = get().conversation?.id;
+        const isUnread =
+          message.senderId !== currentUserId &&
+          message.conversationId !== activeConversationId;
+
+        set((state) => ({
+          conversations: updateConversationSummaries(
+            state.conversations,
+            message,
+            currentUserId,
+            activeConversationId,
+          ),
+          unreadCount: isUnread
+            ? state.unreadCount + 1
+            : state.unreadCount,
+        }));
+      });
+    } catch (error) {
+      set({
+        conversationsError:
+          error instanceof Error
+            ? error.message
+            : "No fue posible cargar las conversaciones",
+      });
+
+    } finally {
+      set({
+        isLoadingConversations: false,
+      });
+    }
+  },
+
+  loadMoreConversations: async () => {
+    const {
+      conversations,
+      hasMoreConversations,
+      isLoadingMoreConversations,
+    } = get();
+
+    if (!hasMoreConversations || isLoadingMoreConversations) {
+      return;
+    }
+
+    set({
+      isLoadingMoreConversations: true,
+      conversationsError: null,
+    });
+
+    try {
+      const nextPage = await chatService.getConversations({
+        limit: CONVERSATIONS_PAGE_SIZE,
+        offset: conversations.length,
+      });
+
+      set((state) => {
+        const existingIds = new Set(
+          state.conversations.map((conversation) => conversation.id),
+        );
+
+        return {
+          conversations: [
+            ...state.conversations,
+            ...nextPage.filter(
+              (conversation) => !existingIds.has(conversation.id),
+            ),
+          ],
+          hasMoreConversations:
+            nextPage.length === CONVERSATIONS_PAGE_SIZE,
+        };
+      });
+    } catch (error) {
+      set({
+        conversationsError:
+          error instanceof Error
+            ? error.message
+            : "No fue posible cargar más conversaciones",
+      });
+    } finally {
+      set({
+        isLoadingMoreConversations: false,
+      });
+    }
+  },
 
   openCaseChat: async (caseId) => {
     set({
@@ -224,19 +406,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
 
     socket.on("message:created", (message) => {
-      if (message.conversationId !== conversationId) {
-        return;
-      }
+      const currentUserId = useAuthStore.getState().user?.id;
+      const activeConversationId = get().conversation?.id;
+      const isActiveConversation =
+        message.conversationId === activeConversationId;
+      const shouldIncrementUnread =
+        message.senderId !== currentUserId && !isActiveConversation;
 
       set((state) => ({
-        messages: addMessageWithoutDuplicates(state.messages, message),
+        messages: isActiveConversation
+          ? addMessageWithoutDuplicates(state.messages, message)
+          : state.messages,
+        conversations: updateConversationSummaries(
+          state.conversations,
+          message,
+          currentUserId,
+          activeConversationId,
+        ),
+        unreadCount: shouldIncrementUnread
+          ? state.unreadCount + 1
+          : state.unreadCount,
       }));
 
-      if (message.conversationId === conversationId) {
+      if (isActiveConversation && message.senderId !== currentUserId) {
         void chatService
-          .markAsRead(conversationId)
+          .markAsRead(message.conversationId)
           .then(() => {
-            emitConversationRead(conversationId);
+            emitConversationRead(message.conversationId);
           })
           .catch((error) => {
             console.log("No fue posible marcar el mensaje como leído:", error);
@@ -332,6 +528,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await chatService.markAsRead(conversation.id);
 
       emitConversationRead(conversation.id);
+
+      set((state) => {
+        const summary = state.conversations.find(
+          (item) => item.id === conversation.id,
+        );
+
+        return {
+          conversations: state.conversations.map((item) =>
+            item.id === conversation.id
+              ? {
+                  ...item,
+                  unreadCount: 0,
+                }
+              : item,
+          ),
+          unreadCount: Math.max(
+            0,
+            state.unreadCount - (summary?.unreadCount ?? 0),
+          ),
+        };
+      });
+
+      const count = await chatService.getAllUnreadCount();
+
+      set({ unreadCount: count });
     } catch (error) {
       console.log("No fue posible marcar el chat como leído:", error);
     }
@@ -345,8 +566,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const socket = getChatSocket();
-
-    socket?.off("message:created");
 
     socket?.off("conversation:read");
 
@@ -370,6 +589,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearError: () => {
     set({
       error: null,
+    });
+  },
+
+  loadUnreadCount: async () => {
+    try {
+      const count = await chatService.getAllUnreadCount();
+
+      set({
+        unreadCount: count,
+      });
+    } catch (error) {
+      console.log("No fue posible cargar los mensajes no leídos:", error);
+    }
+  },
+
+  setUnreadCount: (count) => {
+    set({
+      unreadCount: Math.max(0, count),
     });
   },
 }));

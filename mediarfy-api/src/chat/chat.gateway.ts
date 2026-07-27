@@ -201,9 +201,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       currentUser,
     );
 
-    this.server
-      .to(this.getConversationRoom(conversationId))
-      .emit('message:created', message);
+    const participantUserIds =
+      await this.chatService.getConversationParticipantUserIds(conversationId);
+
+    const recipientRooms = [
+      this.getConversationRoom(conversationId),
+      ...participantUserIds.map((userId) => this.getUserRoom(userId)),
+    ];
+
+    this.server.to(recipientRooms).emit('message:created', message);
 
     return {
       success: true,
@@ -243,7 +249,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private extractAccessToken(client: Socket): string | null {
-    const authToken = client.handshake.auth?.token;
+    const authToken: unknown = client.handshake.auth?.token;
 
     if (typeof authToken === 'string' && authToken.trim()) {
       return authToken.replace(/^Bearer\s+/i, '');

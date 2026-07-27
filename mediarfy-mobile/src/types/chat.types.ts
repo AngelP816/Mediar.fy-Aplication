@@ -51,6 +51,18 @@ export interface ChatMessage {
   sender: ChatUser | null;
 }
 
+export interface ChatConversationSummary {
+  id: string;
+  caseId: string;
+  status: ChatConversationStatus;
+  createdAt: string;
+  updatedAt: string;
+  case: ChatCase;
+  lastMessage: ChatMessage | null;
+  unreadCount: number;
+  participants: ChatParticipant[];
+}
+
 export interface ChatMessagesResponse {
   messages: ChatMessage[];
   hasMore: boolean;

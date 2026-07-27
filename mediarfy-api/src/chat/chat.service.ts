@@ -13,7 +13,7 @@ import {
   Role,
 } from '../generated/prisma/enums';
 
-import type { ChatConversation } from '../generated/prisma/client';
+import { Prisma, type ChatConversation } from '../generated/prisma/client';
 
 import type { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 
@@ -30,6 +30,122 @@ export class ChatService {
     private readonly notificationsService: NotificationsService,
     private readonly chatPresenceService: ChatPresenceService,
   ) {}
+
+  async findConversations(
+    currentUser: AuthenticatedUser,
+    limit = 50,
+    offset = 0,
+  ) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException(
+        'El límite debe ser un número entero entre 1 y 100',
+      );
+    }
+
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new BadRequestException(
+        'El desplazamiento debe ser un número entero mayor o igual a 0',
+      );
+    }
+
+    const page = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        unreadCount: number;
+      }>
+    >(Prisma.sql`
+      SELECT
+        conversation."id",
+        (
+          SELECT COUNT(*)::integer
+          FROM "chat_messages" unread_message
+          WHERE
+            unread_message."conversationId" = conversation."id"
+            AND unread_message."senderId" <> ${currentUser.userId}
+            AND (
+              participant."lastReadAt" IS NULL
+              OR unread_message."createdAt" > participant."lastReadAt"
+            )
+        ) AS "unreadCount"
+      FROM "chat_conversations" conversation
+      INNER JOIN "chat_participants" participant
+        ON participant."conversationId" = conversation."id"
+        AND participant."userId" = ${currentUser.userId}
+        AND participant."isActive" = true
+      LEFT JOIN LATERAL (
+        SELECT message."createdAt"
+        FROM "chat_messages" message
+        WHERE message."conversationId" = conversation."id"
+        ORDER BY message."createdAt" DESC, message."id" DESC
+        LIMIT 1
+      ) last_message ON true
+      WHERE conversation."status" <> ${ChatConversationStatus.ARCHIVED}::"ChatConversationStatus"
+      ORDER BY
+        COALESCE(last_message."createdAt", conversation."updatedAt") DESC,
+        conversation."id" DESC
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `);
+
+    if (page.length === 0) {
+      return [];
+    }
+
+    const conversations = await this.prisma.chatConversation.findMany({
+      where: {
+        id: {
+          in: page.map((item) => item.id),
+        },
+      },
+      include: {
+        ...this.conversationInclude,
+        messages: {
+          orderBy: [
+            {
+              createdAt: 'desc',
+            },
+            {
+              id: 'desc',
+            },
+          ],
+          take: 1,
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                role: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const conversationsById = new Map(
+      conversations.map((conversation) => [conversation.id, conversation]),
+    );
+
+    return page.flatMap((item) => {
+      const conversation = conversationsById.get(item.id);
+
+      if (!conversation) {
+        return [];
+      }
+
+      const { messages, ...summary } = conversation;
+
+      return [
+        {
+          ...summary,
+          lastMessage: messages[0] ?? null,
+          unreadCount: item.unreadCount,
+        },
+      ];
+    });
+  }
 
   async getOrCreateCaseConversation(
     caseId: string,
@@ -584,5 +700,41 @@ export class ChatService {
         messageId,
       })),
     );
+  }
+  async countAllUnread(currentUser: AuthenticatedUser) {
+    const participations = await this.prisma.chatParticipant.findMany({
+      where: {
+        userId: currentUser.userId,
+        isActive: true,
+      },
+      select: {
+        conversationId: true,
+        lastReadAt: true,
+      },
+    });
+
+    let count = 0;
+
+    for (const participant of participations) {
+      count += await this.prisma.chatMessage.count({
+        where: {
+          conversationId: participant.conversationId,
+
+          senderId: {
+            not: currentUser.userId,
+          },
+
+          createdAt: participant.lastReadAt
+            ? {
+                gt: participant.lastReadAt,
+              }
+            : undefined,
+        },
+      });
+    }
+
+    return {
+      count,
+    };
   }
 }

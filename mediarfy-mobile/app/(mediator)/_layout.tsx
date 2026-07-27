@@ -1,12 +1,17 @@
-import { Tabs } from 'expo-router';
+import { Tabs, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useNotificationsStore } from '../../src/stores/notifications.store';
+import { useChatStore } from '../../src/stores/chat.store';
 
 export default function MediatorLayout() {
   const unreadCount =
     useNotificationsStore(
       (state) =>
         state.unreadCount,
+    );
+  const chatUnreadCount =
+    useChatStore(
+      (state) => state.unreadCount,
     );
 
   return (
@@ -46,11 +51,17 @@ export default function MediatorLayout() {
           title: 'Solicitudes',
           tabBarIcon: ({ color, size }) => (
             <Ionicons
-              name="clipboard-outline"
+              name="document-text-outline"
               color={color}
               size={size}
             />
           ),
+        }}
+        listeners={{
+          tabPress: (event) => {
+            event.preventDefault();
+            router.replace('/(mediator)/requests');
+          }
         }}
       />
 
@@ -58,13 +69,23 @@ export default function MediatorLayout() {
         name="cases"
         options={{
           title: 'Casos',
+          tabBarBadge:
+            chatUnreadCount > 0
+              ? chatUnreadCount
+              : undefined,
           tabBarIcon: ({ color, size }) => (
             <Ionicons
-              name="briefcase-outline"
+              name="folder-open-outline"
               color={color}
               size={size}
             />
           ),
+        }}
+        listeners={{
+          tabPress: (event) => {
+            event.preventDefault();
+            router.replace('/(mediator)/cases');
+          }
         }}
       />
 

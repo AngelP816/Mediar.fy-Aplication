@@ -8,7 +8,6 @@ import type { AuthUser, LoginData, RegisterData } from "../types/auth.types";
 import { useNotificationsStore } from "./notifications.store";
 import { unregisterCurrentDevicePushToken } from "../services/push-notifications.service";
 import { disconnectChatSocket } from '../services/chat-socket.service';
-import { useChatStore } from './chat.store';
 
 interface AuthState {
   user: AuthUser | null;

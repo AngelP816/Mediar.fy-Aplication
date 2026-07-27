@@ -14,6 +14,9 @@ import {
   CaseStatus,
   MediationCase,
 } from '../../../src/types/case.types';
+import { ChatConversationsScreen } from '../../../src/screens/ChatConversationsScreen';
+
+type CasesSection = 'cases' | 'conversations';
 
 const statusLabels: Record<CaseStatus, string> = {
   OPEN: 'Abierto',
@@ -31,6 +34,7 @@ const statusLabels: Record<CaseStatus, string> = {
 
 export default function ClientCasesScreen() {
   const router = useRouter();
+  const [section, setSection] = useState<CasesSection>('cases');
 
   const [cases, setCases] = useState<MediationCase[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -73,7 +77,7 @@ export default function ClientCasesScreen() {
     void loadCases();
   };
 
-  if (isLoading) {
+  if (isLoading && section === 'cases') {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" />
@@ -93,7 +97,31 @@ export default function ClientCasesScreen() {
         solicitudes aceptadas.
       </Text>
 
-      {error ? (
+      <View style={styles.sectionSelector}>
+        {(['cases', 'conversations'] as const).map((value) => (
+          <Pressable
+            key={value}
+            style={[
+              styles.sectionButton,
+              section === value && styles.sectionButtonActive,
+            ]}
+            onPress={() => setSection(value)}
+          >
+            <Text
+              style={[
+                styles.sectionButtonText,
+                section === value && styles.sectionButtonTextActive,
+              ]}
+            >
+              {value === 'cases' ? 'Casos' : 'Conversaciones'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {section === 'conversations' ? (
+        <ChatConversationsScreen />
+      ) : error ? (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
 
@@ -213,6 +241,29 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     color: '#4A5568',
     lineHeight: 20,
+  },
+  sectionSelector: {
+    flexDirection: 'row',
+    marginBottom: 18,
+    padding: 4,
+    borderRadius: 10,
+    backgroundColor: '#E2E8F0',
+  },
+  sectionButton: {
+    flex: 1,
+    paddingVertical: 9,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  sectionButtonActive: {
+    backgroundColor: '#1A365D',
+  },
+  sectionButtonText: {
+    color: '#4A5568',
+    fontWeight: '700',
+  },
+  sectionButtonTextActive: {
+    color: '#FFFFFF',
   },
   list: {
     paddingBottom: 24,
