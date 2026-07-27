@@ -129,6 +129,7 @@ enum NotificationType {
   DOCUMENT_RESTORED
   DOCUMENT_DELETED
   GENERAL
+  CHAT_MESSAGE_RECEIVED
 }
 
 enum NotificationStatus {
@@ -513,6 +514,9 @@ model Notification {
 
   metadata Json?
 
+  conversationId String?
+  messageId      String?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt  DateTime  @default(now())
@@ -523,6 +527,8 @@ model Notification {
   @@index([userId, status])
   @@index([createdAt])
   @@index([caseId])
+  @@index([conversationId])
+  @@index([messageId])
   @@map("notifications")
 }
 

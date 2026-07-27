@@ -27,6 +27,10 @@ import {
   formatFileSize,
 } from '../../../src/utils/case-document.util';
 
+import {
+  OpenCaseChatButton,
+} from '../../../src/components/OpenCaseChatButton';
+
 const statusLabels: Record<CaseStatus, string> = {
   OPEN: 'Abierto',
   INFORMATION_PENDING: 'Información pendiente',
@@ -298,6 +302,10 @@ export default function ClientCaseDetailScreen() {
           ),
         )}
       </Section>
+      
+      <OpenCaseChatButton
+        caseId={mediationCase.id}
+      />
 
       <Section title="Sesiones programadas">
         {isLoadingSessions ? (

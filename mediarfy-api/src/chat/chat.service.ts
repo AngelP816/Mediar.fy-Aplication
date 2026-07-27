@@ -9,6 +9,7 @@ import {
   CaseParticipantRole,
   ChatConversationStatus,
   ChatMessageType,
+  NotificationType,
   Role,
 } from '../generated/prisma/enums';
 
@@ -19,10 +20,16 @@ import type { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface
 import { PrismaService } from '../prisma/prisma.service';
 
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { ChatPresenceService } from './chat-presence.service';
 
 @Injectable()
 export class ChatService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+    private readonly chatPresenceService: ChatPresenceService,
+  ) {}
 
   async getOrCreateCaseConversation(
     caseId: string,
@@ -197,6 +204,13 @@ export class ChatService {
         lastReadAt: new Date(),
       },
     });
+
+    await this.notifyMessageRecipients(
+      conversationId,
+      message.id,
+      content,
+      currentUser,
+    );
 
     return message;
   }
@@ -501,5 +515,74 @@ export class ChatService {
     });
 
     return participants.map((participant) => participant.userId);
+  }
+
+  private async notifyMessageRecipients(
+    conversationId: string,
+    messageId: string,
+    content: string,
+    currentUser: AuthenticatedUser,
+  ): Promise<void> {
+    const conversation = await this.prisma.chatConversation.findUnique({
+      where: {
+        id: conversationId,
+      },
+      select: {
+        caseId: true,
+        case: {
+          select: {
+            folio: true,
+            title: true,
+          },
+        },
+        participants: {
+          where: {
+            isActive: true,
+            userId: {
+              not: currentUser.userId,
+            },
+          },
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    if (!conversation) {
+      return;
+    }
+
+    const recipientUserIds = [
+      ...new Set(
+        conversation.participants
+          .map((participant) => participant.userId)
+          .filter(
+            (userId) =>
+              !this.chatPresenceService.isUserViewingConversation(
+                userId,
+                conversationId,
+              ),
+          ),
+      ),
+    ];
+
+    if (recipientUserIds.length === 0) {
+      return;
+    }
+
+    const preview = content.length > 80 ? `${content.slice(0, 80)}…` : content;
+
+    await this.notificationsService.createMany(
+      recipientUserIds.map((userId) => ({
+        userId,
+        type: NotificationType.CHAT_MESSAGE_RECEIVED,
+        title: `Nuevo mensaje en ${conversation.case.folio}`,
+        message: preview,
+        caseId: conversation.caseId,
+        conversationId,
+        messageId,
+      })),
+    );
   }
 }

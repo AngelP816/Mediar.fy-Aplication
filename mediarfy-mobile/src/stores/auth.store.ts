@@ -7,6 +7,8 @@ import { tokenStorage } from "../services/token-storage.service";
 import type { AuthUser, LoginData, RegisterData } from "../types/auth.types";
 import { useNotificationsStore } from "./notifications.store";
 import { unregisterCurrentDevicePushToken } from "../services/push-notifications.service";
+import { disconnectChatSocket } from '../services/chat-socket.service';
+import { useChatStore } from './chat.store';
 
 interface AuthState {
   user: AuthUser | null;
@@ -46,8 +48,9 @@ function getErrorMessage(error: unknown): string {
   return "Ocurrió un error inesperado";
 }
 
-function clearNotificationsSession(): void {
+function clearRealtimeSession(): void {
   disconnectNotificationsSocket();
+  disconnectChatSocket();
   useNotificationsStore.getState().clearNotifications();
 }
 
@@ -87,7 +90,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         if (!accessToken || !refreshToken) {
           await clearStoredTokens();
-          clearNotificationsSession();
+          clearRealtimeSession();
 
           set({
             user: null,
@@ -106,7 +109,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         });
       } catch (error) {
         console.log("No fue posible restaurar la sesión:", error);
-        clearNotificationsSession();
+        clearRealtimeSession();
 
         set({
           user: null,
@@ -234,7 +237,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
        * se limpian las notificaciones y eliminamos
        * las credenciales locales.
        */
-      clearNotificationsSession();
+      clearRealtimeSession();
 
       await clearStoredTokens();
 

@@ -35,6 +35,9 @@ import {
   documentTypeLabels,
   formatFileSize,
 } from '../../../src/utils/case-document.util';
+import {
+  OpenCaseChatButton,
+} from '../../../src/components/OpenCaseChatButton';
 
 interface SessionAction {
   label: string;
@@ -850,6 +853,10 @@ export default function MediatorCaseDetailScreen() {
             ),
           )}
         </Section>
+
+        <OpenCaseChatButton
+          caseId={mediationCase.id}
+        />
 
         {availableActions.length > 0 ? (
           <Section title="Acciones del caso">

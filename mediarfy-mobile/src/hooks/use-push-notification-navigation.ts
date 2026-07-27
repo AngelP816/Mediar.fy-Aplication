@@ -17,6 +17,8 @@ interface PushNotificationData {
   sessionId?: unknown;
   invitationId?: unknown;
   documentId?: unknown;
+  conversationId?: unknown;
+  messageId?: unknown;
 }
 
 function getStringValue(value: unknown): string | null {
@@ -80,6 +82,8 @@ export function usePushNotificationNavigation() {
 
     const documentId = getStringValue(data.documentId);
 
+    const conversationId = getStringValue(data.conversationId);
+
     /*
      * Marcamos la notificación interna como leída,
      * pero no bloqueamos la navegación.
@@ -127,19 +131,30 @@ export function usePushNotificationNavigation() {
       });
 
       if (type === "INVITATION_CREATED" && user.role === "CLIENT") {
-        router.replace("/(client)/invitations");
+        router.push("/(client)/invitations");
         clearNotificationResponse();
         return;
       }
 
       if (user.role === "MEDIATOR") {
+        if (type === "CHAT_MESSAGE_RECEIVED" && conversationId) {
+          router.push({
+            pathname: "/(mediator)/cases/chat/[conversationId]",
+            params: {
+              conversationId,
+            },
+          });
+
+          clearNotificationResponse();
+          return;
+        }
         if (
           documentId &&
           (type === "DOCUMENT_CREATED" || type === "DOCUMENT_VERSION_CREATED")
         ) {
           console.log("Redirigiendo al documento del mediador:", documentId);
 
-          router.replace({
+          router.push({
             pathname: "/(mediator)/cases/documents/[documentId]",
             params: {
               documentId,
@@ -153,7 +168,7 @@ export function usePushNotificationNavigation() {
         if (caseId) {
           console.log("Redirigiendo al caso del mediador:", caseId);
 
-          router.replace({
+          router.push({
             pathname: "/(mediator)/cases/[id]",
             params: {
               id: caseId,
@@ -164,19 +179,30 @@ export function usePushNotificationNavigation() {
           return;
         }
 
-        router.replace("/(mediator)/notifications");
+        router.push("/(mediator)/notifications");
         clearNotificationResponse();
         return;
       }
 
       if (user.role === "CLIENT") {
+        if (type === "CHAT_MESSAGE_RECEIVED" && conversationId) {
+          router.push({
+            pathname: "/(client)/cases/chat/[conversationId]",
+            params: {
+              conversationId,
+            },
+          });
+
+          clearNotificationResponse();
+          return;
+        }
         if (
           documentId &&
           (type === "DOCUMENT_CREATED" || type === "DOCUMENT_VERSION_CREATED")
         ) {
           console.log("Redirigiendo al documento del cliente:", documentId);
 
-          router.replace({
+          router.push({
             pathname: "/(client)/cases/documents/[documentId]",
             params: {
               documentId,
@@ -190,7 +216,7 @@ export function usePushNotificationNavigation() {
         if (caseId) {
           console.log("Redirigiendo al caso del cliente:", caseId);
 
-          router.replace({
+          router.push({
             pathname: "/(client)/cases/[id]",
             params: {
               id: caseId,
@@ -201,13 +227,13 @@ export function usePushNotificationNavigation() {
           return;
         }
 
-        router.replace("/(client)/notifications");
+        router.push("/(client)/notifications");
         clearNotificationResponse();
         return;
       }
 
       if (user.role === "ADMIN") {
-        router.replace("/(admin)");
+        router.push("/(admin)");
         clearNotificationResponse();
       }
     }, 700);

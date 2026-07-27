@@ -26,6 +26,8 @@ interface CreateNotificationData {
   sessionId?: string;
   invitationId?: string;
   documentId?: string;
+  conversationId?: string;
+  messageId?: string;
 
   metadata?: Record<string, string | number | boolean | null>;
 }
@@ -240,6 +242,9 @@ export class NotificationsService {
       sessionId: data.sessionId ?? null,
       invitationId: data.invitationId ?? null,
       documentId: data.documentId ?? null,
+      conversationId: data.conversationId ?? null,
+      messageId: data.messageId ?? null,
+
       metadata: data.metadata ?? undefined,
     };
   }
@@ -274,16 +279,13 @@ export class NotificationsService {
 
           data: {
             notificationId: notification.id,
-
             type: notification.type,
-
             caseId: notification.caseId,
-
             sessionId: notification.sessionId,
-
             invitationId: notification.invitationId,
-
             documentId: notification.documentId,
+            conversationId: notification.conversationId,
+            messageId: notification.messageId,
           },
         }),
       ),

@@ -1,5 +1,4 @@
 import { Logger, UsePipes, ValidationPipe } from '@nestjs/common';
-
 import {
   ConnectedSocket,
   MessageBody,
@@ -10,17 +9,14 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
-
 import { JwtService } from '@nestjs/jwt';
-
 import type { Namespace, Socket } from 'socket.io';
-
 import type {
   AuthenticatedUser,
   JwtPayload,
 } from '../auth/interfaces/jwt-payload.interface';
-
 import { ChatService } from './chat.service';
+import { ChatPresenceService } from './chat-presence.service';
 
 interface AuthenticatedChatSocket extends Socket {
   data: {
@@ -63,6 +59,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly jwtService: JwtService,
     private readonly chatService: ChatService,
+    private readonly chatPresenceService: ChatPresenceService,
   ) {}
 
   async handleConnection(client: AuthenticatedChatSocket): Promise<void> {
@@ -109,6 +106,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: AuthenticatedChatSocket): void {
+    this.chatPresenceService.removeSocket(client.id);
+
     const userId = client.data.user?.userId;
 
     if (userId) {
@@ -135,6 +134,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     await client.join(this.getConversationRoom(conversationId));
 
+    this.chatPresenceService.joinConversation(
+      client.id,
+      currentUser.userId,
+      conversationId,
+    );
+
     return {
       success: true,
       conversationId,
@@ -149,9 +154,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody()
     payload: JoinConversationPayload,
   ) {
+    const currentUser = this.getAuthenticatedUser(client);
+
     const conversationId = this.validateConversationId(payload?.conversationId);
 
     await client.leave(this.getConversationRoom(conversationId));
+
+    this.chatPresenceService.leaveConversation(
+      client.id,
+      currentUser.userId,
+      conversationId,
+    );
 
     return {
       success: true,

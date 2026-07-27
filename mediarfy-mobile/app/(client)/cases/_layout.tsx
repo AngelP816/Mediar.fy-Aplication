@@ -1,3 +1,4 @@
+import { ScreenBackButton } from '@/src/components/ScreenBackButton';
 import { Stack } from 'expo-router';
 
 export default function ClientCasesLayout() {
@@ -31,6 +32,18 @@ export default function ClientCasesLayout() {
         name="documents/[documentId]"
         options={{
           title: 'Versiones del documento',
+        }}
+      />
+
+      <Stack.Screen
+        name="chat/[conversationId]"
+        options={{
+          title: 'Conversación',
+          headerLeft: () => (
+                  <ScreenBackButton
+                    fallbackRoute="/(client)/cases/index.tsx"
+                  />
+                ),
         }}
       />
     </Stack>

@@ -1,3 +1,4 @@
+import { ScreenBackButton } from '@/src/components/ScreenBackButton';
 import { Stack } from 'expo-router';
 
 export default function MediatorCasesLayout() {
@@ -24,6 +25,11 @@ export default function MediatorCasesLayout() {
         name="[id]"
         options={{
           title: 'Detalle del caso',
+          headerLeft: () => (
+            <ScreenBackButton
+              fallbackRoute="/(mediator)"
+            />
+          ),
         }}
       />
 
@@ -66,6 +72,18 @@ export default function MediatorCasesLayout() {
         name="documents/new-version"
         options={{
           title: 'Nueva versión',
+        }}
+      />
+
+      <Stack.Screen
+        name="chat/[conversationId]"
+        options={{
+          title: 'Conversación',
+          headerLeft: () => (
+            <ScreenBackButton
+              fallbackRoute="/(mediator)/cases/index.tsx"
+            />
+          ),
         }}
       />
     </Stack>
