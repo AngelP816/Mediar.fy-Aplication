@@ -13,6 +13,7 @@ import {
 
 import type {
   ChatConversation,
+  ChatConversationStatusChangedEvent,
   ChatConversationSummary,
   ChatMessage,
   ChatReadEvent,
@@ -57,6 +58,8 @@ interface ChatState {
   connectConversation: (conversationId: string) => Promise<void>;
 
   sendMessage: (content: string) => Promise<void>;
+
+  shareDocument: (documentId: string, content?: string) => Promise<void>;
 
   markAsRead: () => Promise<void>;
 
@@ -113,6 +116,7 @@ function updateConversationSummaries(
       }
 
       const shouldIncrementUnread =
+        message.type !== "SYSTEM" &&
         message.senderId !== currentUserId &&
         message.conversationId !== activeConversationId;
 
@@ -126,6 +130,31 @@ function updateConversationSummaries(
       };
     }),
   );
+}
+
+function applyConversationStatusChanged(
+  state: Pick<ChatState, "conversation" | "conversations">,
+  event: ChatConversationStatusChangedEvent,
+) {
+  return {
+    conversation:
+      state.conversation?.id === event.conversationId
+        ? {
+            ...state.conversation,
+            status: event.status,
+            updatedAt: event.changedAt,
+          }
+        : state.conversation,
+    conversations: state.conversations.map((conversation) =>
+      conversation.id === event.conversationId
+        ? {
+            ...conversation,
+            status: event.status,
+            updatedAt: event.changedAt,
+          }
+        : conversation,
+    ),
+  };
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -174,11 +203,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const socket = await connectChatSocket();
 
       socket.off("message:created");
+      socket.off("conversation:status-changed");
 
       socket.on("message:created", (message) => {
         const currentUserId = useAuthStore.getState().user?.id;
         const activeConversationId = get().conversation?.id;
         const isUnread =
+          message.type !== "SYSTEM" &&
           message.senderId !== currentUserId &&
           message.conversationId !== activeConversationId;
 
@@ -194,6 +225,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : state.unreadCount,
         }));
       });
+
+      socket.on(
+        "conversation:status-changed",
+        (event: ChatConversationStatusChangedEvent) => {
+          set((state) => applyConversationStatusChanged(state, event));
+        },
+      );
     } catch (error) {
       set({
         conversationsError:
@@ -385,6 +423,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     socket.off("conversation:read");
 
+    socket.off("conversation:status-changed");
+
     socket.off("connect");
 
     socket.off("disconnect");
@@ -411,7 +451,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const isActiveConversation =
         message.conversationId === activeConversationId;
       const shouldIncrementUnread =
-        message.senderId !== currentUserId && !isActiveConversation;
+        message.type !== "SYSTEM" &&
+        message.senderId !== currentUserId &&
+        !isActiveConversation;
 
       set((state) => ({
         messages: isActiveConversation
@@ -466,6 +508,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     });
 
+    socket.on(
+      "conversation:status-changed",
+      (event: ChatConversationStatusChangedEvent) => {
+        set((state) => applyConversationStatusChanged(state, event));
+      },
+    );
+
     await joinChatConversation(conversationId);
 
     set({
@@ -480,6 +529,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     if (!conversation || !trimmedContent) {
       return;
+    }
+
+    if (conversation.status !== "ACTIVE") {
+      const closedMessage =
+        "Esta conversación está cerrada y ya no admite mensajes.";
+
+      set({
+        error: closedMessage,
+      });
+
+      throw new Error(closedMessage);
     }
 
     set({
@@ -507,6 +567,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
           error instanceof Error
             ? error.message
             : "No fue posible enviar el mensaje",
+      });
+
+      throw error;
+    } finally {
+      set({
+        isSending: false,
+      });
+    }
+  },
+
+  shareDocument: async (documentId, content) => {
+    const conversation = get().conversation;
+
+    if (!conversation || conversation.status !== "ACTIVE") {
+      throw new Error(
+        "Esta conversación está cerrada y no admite documentos.",
+      );
+    }
+
+    set({
+      isSending: true,
+      error: null,
+    });
+
+    try {
+      const message = await chatService.shareDocument(
+        conversation.id,
+        documentId,
+        content?.trim() || undefined,
+      );
+
+      set((state) => ({
+        messages: addMessageWithoutDuplicates(state.messages, message),
+        conversations: updateConversationSummaries(
+          state.conversations,
+          message,
+          useAuthStore.getState().user?.id,
+          state.conversation?.id,
+        ),
+      }));
+    } catch (error) {
+      set({
+        error:
+          error instanceof Error
+            ? error.message
+            : "No fue posible compartir el documento",
       });
 
       throw error;
@@ -568,6 +674,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const socket = getChatSocket();
 
     socket?.off("conversation:read");
+
+    socket?.off("conversation:status-changed");
 
     socket?.off("connect");
 

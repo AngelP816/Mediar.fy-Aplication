@@ -3,7 +3,11 @@ import { io, type Socket } from "socket.io-client";
 import { api } from "./api.service";
 import { tokenStorage } from "./token-storage.service";
 
-import type { ChatMessage, ChatReadEvent } from "../types/chat.types";
+import type {
+  ChatConversationStatusChangedEvent,
+  ChatMessage,
+  ChatReadEvent,
+} from "../types/chat.types";
 
 interface ServerToClientEvents {
   "chat:connected": (payload: { userId: string }) => void;
@@ -13,6 +17,10 @@ interface ServerToClientEvents {
   "message:created": (message: ChatMessage) => void;
 
   "conversation:read": (payload: ChatReadEvent) => void;
+
+  "conversation:status-changed": (
+    payload: ChatConversationStatusChangedEvent,
+  ) => void;
 }
 
 interface ClientToServerEvents {

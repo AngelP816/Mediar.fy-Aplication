@@ -221,6 +221,43 @@ export class CaseDocumentsService {
     });
   }
 
+  async findAccessibleForChat(
+    documentId: string,
+    caseId: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    await this.verifyCaseAccess(caseId, currentUser);
+
+    const document = await this.prisma.caseDocument.findFirst({
+      where: {
+        id: documentId,
+        caseId,
+        status: {
+          not: CaseDocumentStatus.DELETED,
+        },
+        mediationCase: {
+          deletedAt: null,
+        },
+      },
+      include: {
+        versions: {
+          orderBy: {
+            versionNumber: 'desc',
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (!document) {
+      throw new NotFoundException(
+        'Documento no encontrado o no pertenece a este caso',
+      );
+    }
+
+    return document;
+  }
+
   async createVersion(
     documentId: string,
     currentUser: AuthenticatedUser,

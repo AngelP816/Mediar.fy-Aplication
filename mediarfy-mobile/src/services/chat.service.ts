@@ -81,6 +81,22 @@ export const chatService = {
     return response.data;
   },
 
+  async shareDocument(
+    conversationId: string,
+    documentId: string,
+    content?: string,
+  ): Promise<ChatMessage> {
+    const response = await api.post<ChatMessage>(
+      `/chat/conversations/${conversationId}/documents`,
+      {
+        documentId,
+        content,
+      },
+    );
+
+    return response.data;
+  },
+
   async markAsRead(conversationId: string): Promise<ChatReadResponse> {
     const response = await api.patch<ChatReadResponse>(
       `/chat/conversations/${conversationId}/read`,

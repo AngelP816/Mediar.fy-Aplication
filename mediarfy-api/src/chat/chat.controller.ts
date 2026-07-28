@@ -20,11 +20,16 @@ import type { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface
 import { ChatService } from './chat.service';
 
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
+import { ShareChatDocumentDto } from './dto/share-chat-document.dto';
+import { ChatGateway } from './chat.gateway';
 
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly chatGateway: ChatGateway,
+  ) {}
 
   @Get('chat/conversations')
   findConversations(
@@ -86,6 +91,32 @@ export class ChatController {
     currentUser: AuthenticatedUser,
   ) {
     return this.chatService.sendMessage(conversationId, dto, currentUser);
+  }
+
+  @Post('chat/conversations/:conversationId/documents')
+  async shareDocument(
+    @Param('conversationId')
+    conversationId: string,
+    @Body()
+    dto: ShareChatDocumentDto,
+    @CurrentUser()
+    currentUser: AuthenticatedUser,
+  ) {
+    const message = await this.chatService.shareDocument(
+      conversationId,
+      dto,
+      currentUser,
+    );
+    const participantUserIds =
+      await this.chatService.getConversationParticipantUserIds(conversationId);
+
+    this.chatGateway.emitMessageCreated(
+      message,
+      conversationId,
+      participantUserIds,
+    );
+
+    return message;
   }
 
   @Patch('chat/conversations/:conversationId/read')

@@ -5,11 +5,13 @@ import { ChatGateway } from './chat.gateway';
 import { AuthModule } from 'src/auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ChatPresenceService } from './chat-presence.service';
+import { CaseDocumentsModule } from '../case-documents/case-documents.module';
 
 @Module({
   imports: [
     AuthModule,
     NotificationsModule,
+    CaseDocumentsModule,
   ],
   controllers: [
     ChatController,
@@ -21,6 +23,7 @@ import { ChatPresenceService } from './chat-presence.service';
   ],
   exports: [
     ChatService,
+    ChatGateway,
   ],
 })
 export class ChatModule {}

@@ -5,7 +5,8 @@ export type ChatConversationStatus =
 
 export type ChatMessageType =
   | 'TEXT'
-  | 'SYSTEM';
+  | 'SYSTEM'
+  | 'DOCUMENT';
 
 export interface ChatUser {
   id: string;
@@ -49,6 +50,27 @@ export interface ChatMessage {
   createdAt: string;
   updatedAt: string;
   sender: ChatUser | null;
+  documentId: string | null;
+  document: ChatMessageDocument | null;
+}
+
+export interface ChatMessageDocumentVersion {
+  id: string;
+  versionNumber: number;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface ChatMessageDocument {
+  id: string;
+  caseId: string;
+  name: string;
+  type: import('./case-document.types').CaseDocumentType;
+  status: import('./case-document.types').CaseDocumentStatus;
+  currentVersion: number;
+  versions: ChatMessageDocumentVersion[];
 }
 
 export interface ChatConversationSummary {
@@ -81,4 +103,11 @@ export interface ChatReadEvent {
   conversationId: string;
   userId: string;
   readAt: string;
+}
+
+export interface ChatConversationStatusChangedEvent {
+  conversationId: string;
+  caseId: string;
+  status: ChatConversationStatus;
+  changedAt: string;
 }

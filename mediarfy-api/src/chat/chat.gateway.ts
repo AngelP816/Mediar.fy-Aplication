@@ -17,6 +17,8 @@ import type {
 } from '../auth/interfaces/jwt-payload.interface';
 import { ChatService } from './chat.service';
 import { ChatPresenceService } from './chat-presence.service';
+import type { ChatMessage } from '../generated/prisma/client';
+import { ChatConversationStatus } from '../generated/prisma/enums';
 
 interface AuthenticatedChatSocket extends Socket {
   data: {
@@ -35,6 +37,13 @@ interface SendMessagePayload {
 
 interface MarkConversationReadPayload {
   conversationId: string;
+}
+
+export interface ConversationStatusChangedPayload {
+  conversationId: string;
+  caseId: string;
+  status: ChatConversationStatus;
+  changedAt: Date;
 }
 
 @WebSocketGateway({
@@ -246,6 +255,36 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       success: true,
       ...result,
     };
+  }
+
+  emitConversationStatusChanged(
+    payload: ConversationStatusChangedPayload,
+    participantUserIds: string[],
+    systemMessage?: ChatMessage & { sender: null },
+  ): void {
+    const recipientRooms = [
+      this.getConversationRoom(payload.conversationId),
+      ...participantUserIds.map((userId) => this.getUserRoom(userId)),
+    ];
+
+    this.server.to(recipientRooms).emit('conversation:status-changed', payload);
+
+    if (systemMessage) {
+      this.server.to(recipientRooms).emit('message:created', systemMessage);
+    }
+  }
+
+  emitMessageCreated(
+    message: unknown,
+    conversationId: string,
+    participantUserIds: string[],
+  ): void {
+    const recipientRooms = [
+      this.getConversationRoom(conversationId),
+      ...participantUserIds.map((userId) => this.getUserRoom(userId)),
+    ];
+
+    this.server.to(recipientRooms).emit('message:created', message);
   }
 
   private extractAccessToken(client: Socket): string | null {

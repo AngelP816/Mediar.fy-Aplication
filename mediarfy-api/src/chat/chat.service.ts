@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -7,6 +8,7 @@ import {
 
 import {
   CaseParticipantRole,
+  CaseDocumentStatus,
   ChatConversationStatus,
   ChatMessageType,
   NotificationType,
@@ -22,6 +24,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ChatPresenceService } from './chat-presence.service';
+import { CaseDocumentsService } from '../case-documents/case-documents.service';
+import { ShareChatDocumentDto } from './dto/share-chat-document.dto';
 
 @Injectable()
 export class ChatService {
@@ -29,6 +33,7 @@ export class ChatService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly chatPresenceService: ChatPresenceService,
+    private readonly caseDocumentsService: CaseDocumentsService,
   ) {}
 
   async findConversations(
@@ -109,17 +114,7 @@ export class ChatService {
             },
           ],
           take: 1,
-          include: {
-            sender: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                role: true,
-              },
-            },
-          },
+          include: this.messageInclude,
         },
       },
     });
@@ -240,17 +235,7 @@ export class ChatService {
             }
           : {}),
       },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            role: true,
-          },
-        },
-      },
+      include: this.messageInclude,
       orderBy: [
         {
           createdAt: 'desc',
@@ -290,35 +275,44 @@ export class ChatService {
       throw new BadRequestException('El mensaje no puede estar vacío');
     }
 
-    const message = await this.prisma.chatMessage.create({
-      data: {
-        conversationId,
-        senderId: currentUser.userId,
-        type: ChatMessageType.TEXT,
-        content,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            role: true,
-          },
-        },
-      },
-    });
+    const message = await this.prisma.$transaction(async (transaction) => {
+      const lockedConversation = await transaction.$queryRaw<
+        Array<{ status: ChatConversationStatus }>
+      >(Prisma.sql`
+        SELECT "status"
+        FROM "chat_conversations"
+        WHERE "id" = ${conversationId}
+        FOR UPDATE
+      `);
 
-    await this.prisma.chatParticipant.updateMany({
-      where: {
-        conversationId,
-        userId: currentUser.userId,
-        isActive: true,
-      },
-      data: {
-        lastReadAt: new Date(),
-      },
+      if (
+        lockedConversation[0]?.status !== ChatConversationStatus.ACTIVE
+      ) {
+        throw new BadRequestException('La conversaciÃ³n no estÃ¡ activa');
+      }
+
+      const createdMessage = await transaction.chatMessage.create({
+        data: {
+          conversationId,
+          senderId: currentUser.userId,
+          type: ChatMessageType.TEXT,
+          content,
+        },
+        include: this.messageInclude,
+      });
+
+      await transaction.chatParticipant.updateMany({
+        where: {
+          conversationId,
+          userId: currentUser.userId,
+          isActive: true,
+        },
+        data: {
+          lastReadAt: new Date(),
+        },
+      });
+
+      return createdMessage;
     });
 
     await this.notifyMessageRecipients(
@@ -326,6 +320,102 @@ export class ChatService {
       message.id,
       content,
       currentUser,
+    );
+
+    return message;
+  }
+
+  async shareDocument(
+    conversationId: string,
+    dto: ShareChatDocumentDto,
+    currentUser: AuthenticatedUser,
+  ) {
+    const conversation = await this.validateConversationAccess(
+      conversationId,
+      currentUser,
+    );
+
+    if (conversation.status !== ChatConversationStatus.ACTIVE) {
+      throw new BadRequestException('La conversaciÃ³n no estÃ¡ activa');
+    }
+
+    const document = await this.caseDocumentsService.findAccessibleForChat(
+      dto.documentId,
+      conversation.caseId,
+      currentUser,
+    );
+    const content =
+      dto.content?.trim() || `Compartió el documento "${document.name}".`;
+
+    const message = await this.prisma.$transaction(async (transaction) => {
+      const lockedConversation = await transaction.$queryRaw<
+        Array<{ status: ChatConversationStatus; caseId: string }>
+      >(Prisma.sql`
+        SELECT "status", "caseId"
+        FROM "chat_conversations"
+        WHERE "id" = ${conversationId}
+        FOR UPDATE
+      `);
+      const currentConversation = lockedConversation[0];
+
+      if (
+        !currentConversation ||
+        currentConversation.status !== ChatConversationStatus.ACTIVE
+      ) {
+        throw new BadRequestException('La conversaciÃ³n no estÃ¡ activa');
+      }
+
+      const lockedDocument = await transaction.$queryRaw<
+        Array<{ id: string; status: CaseDocumentStatus }>
+      >(Prisma.sql`
+        SELECT "id", "status"
+        FROM "case_documents"
+        WHERE
+          "id" = ${dto.documentId}
+          AND "caseId" = ${currentConversation.caseId}
+        FOR SHARE
+      `);
+
+      if (
+        !lockedDocument[0] ||
+        lockedDocument[0].status === CaseDocumentStatus.DELETED
+      ) {
+        throw new NotFoundException(
+          'Documento no encontrado o no pertenece a este caso',
+        );
+      }
+
+      const createdMessage = await transaction.chatMessage.create({
+        data: {
+          conversationId,
+          senderId: currentUser.userId,
+          documentId: dto.documentId,
+          type: ChatMessageType.DOCUMENT,
+          content,
+        },
+        include: this.messageInclude,
+      });
+
+      await transaction.chatParticipant.updateMany({
+        where: {
+          conversationId,
+          userId: currentUser.userId,
+          isActive: true,
+        },
+        data: {
+          lastReadAt: new Date(),
+        },
+      });
+
+      return createdMessage;
+    });
+
+    await this.notifyMessageRecipients(
+      conversationId,
+      message.id,
+      content,
+      currentUser,
+      dto.documentId,
     );
 
     return message;
@@ -596,6 +686,28 @@ export class ChatService {
     },
   } as const;
 
+  private readonly messageInclude = {
+    sender: {
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        role: true,
+      },
+    },
+    document: {
+      include: {
+        versions: {
+          orderBy: {
+            versionNumber: 'desc' as const,
+          },
+          take: 1,
+        },
+      },
+    },
+  } as const;
+
   async validateSocketConversationAccess(
     conversationId: string,
     currentUser: AuthenticatedUser,
@@ -633,11 +745,51 @@ export class ChatService {
     return participants.map((participant) => participant.userId);
   }
 
+  /**
+   * Reapertura deliberadamente manual: los cambios posteriores del estado del
+   * caso nunca reactivan una conversación cerrada de forma automática.
+   * Se mantiene sin endpoint hasta definir el flujo administrativo y auditoría.
+   */
+  async reopenConversationAdministratively(
+    conversationId: string,
+    currentUser: AuthenticatedUser,
+  ) {
+    if (currentUser.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Solo un administrador puede reabrir una conversaciÃ³n',
+      );
+    }
+
+    const result = await this.prisma.chatConversation.updateMany({
+      where: {
+        id: conversationId,
+        status: ChatConversationStatus.CLOSED,
+      },
+      data: {
+        status: ChatConversationStatus.ACTIVE,
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'La conversaciÃ³n no existe o no se encuentra cerrada',
+      );
+    }
+
+    return this.prisma.chatConversation.findUniqueOrThrow({
+      where: {
+        id: conversationId,
+      },
+      include: this.conversationInclude,
+    });
+  }
+
   private async notifyMessageRecipients(
     conversationId: string,
     messageId: string,
     content: string,
     currentUser: AuthenticatedUser,
+    documentId?: string,
   ): Promise<void> {
     const conversation = await this.prisma.chatConversation.findUnique({
       where: {
@@ -698,6 +850,7 @@ export class ChatService {
         caseId: conversation.caseId,
         conversationId,
         messageId,
+        documentId,
       })),
     );
   }

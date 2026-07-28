@@ -8,6 +8,8 @@ import { randomBytes } from 'node:crypto';
 import {
   CaseParticipantRole,
   CaseStatus,
+  ChatConversationStatus,
+  ChatMessageType,
   Role,
 } from '../generated/prisma/enums';
 import { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
@@ -16,6 +18,10 @@ import { UpdateCaseStatusDto } from './dto/update-case-status.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 
 import { NotificationType } from '../generated/prisma/enums';
+import {
+  ChatGateway,
+  type ConversationStatusChangedPayload,
+} from '../chat/chat.gateway';
 
 @Injectable()
 export class CasesService {
@@ -69,6 +75,7 @@ export class CasesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly chatGateway: ChatGateway,
   ) {}
 
   generateFolio(): string {
@@ -265,7 +272,8 @@ export class CasesService {
 
     const shouldCloseCase = finalStatuses.includes(dto.status);
 
-    const updatedCase = await this.prisma.$transaction(async (transaction) => {
+    const { updatedCase, closedConversation } =
+      await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.mediationCase.updateMany({
         where: {
           id: caseId,
@@ -299,7 +307,83 @@ export class CasesService {
         },
       });
 
-      return transaction.mediationCase.findUniqueOrThrow({
+      let closedConversation:
+        | {
+            event: ConversationStatusChangedPayload;
+            participantUserIds: string[];
+            systemMessage: Awaited<
+              ReturnType<typeof transaction.chatMessage.create>
+            > & { sender: null };
+          }
+        | null = null;
+
+      if (shouldCloseCase) {
+        const conversation = await transaction.chatConversation.findUnique({
+          where: {
+            caseId,
+          },
+          select: {
+            id: true,
+            status: true,
+            participants: {
+              where: {
+                isActive: true,
+              },
+              select: {
+                userId: true,
+              },
+            },
+          },
+        });
+
+        if (
+          conversation &&
+          conversation.status !== ChatConversationStatus.CLOSED
+        ) {
+          const closed = await transaction.chatConversation.update({
+            where: {
+              id: conversation.id,
+            },
+            data: {
+              status: ChatConversationStatus.CLOSED,
+            },
+            select: {
+              updatedAt: true,
+            },
+          });
+
+          const systemMessage = await transaction.chatMessage.create({
+            data: {
+              conversationId: conversation.id,
+              senderId: null,
+              type: ChatMessageType.SYSTEM,
+              content:
+                'La conversación fue cerrada porque el caso finalizó.',
+            },
+            include: {
+              sender: true,
+            },
+          });
+
+          closedConversation = {
+            event: {
+              conversationId: conversation.id,
+              caseId,
+              status: ChatConversationStatus.CLOSED,
+              changedAt: closed.updatedAt,
+            },
+            participantUserIds: conversation.participants.map(
+              (participant) => participant.userId,
+            ),
+            systemMessage: {
+              ...systemMessage,
+              sender: null,
+            },
+          };
+        }
+      }
+
+      const updatedCase = await transaction.mediationCase.findUniqueOrThrow({
         where: {
           id: caseId,
         },
@@ -352,7 +436,20 @@ export class CasesService {
           },
         },
       });
+
+      return {
+        updatedCase,
+        closedConversation,
+      };
     });
+
+    if (closedConversation) {
+      this.chatGateway.emitConversationStatusChanged(
+        closedConversation.event,
+        closedConversation.participantUserIds,
+        closedConversation.systemMessage,
+      );
+    }
 
     await this.notifyCaseUsers(
       updatedCase.id,

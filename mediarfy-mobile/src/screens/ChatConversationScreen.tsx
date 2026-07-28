@@ -8,8 +8,10 @@ import {
 
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -34,6 +36,11 @@ import {
 import type {
   ChatMessage,
 } from '../types/chat.types';
+import type { CaseDocument } from '../types/case-document.types';
+import { caseDocumentsService } from '../services/case-documents.service';
+import { downloadProtectedFile } from '../services/file-download.service';
+import { openFileWithCompatibleApp } from '../services/file-opener.service';
+import { documentTypeLabels } from '../utils/case-document.util';
 
 function formatMessageTime(
   value: string,
@@ -138,6 +145,11 @@ export function ChatConversationScreen() {
       (state) => state.sendMessage,
     );
 
+  const shareDocument =
+    useChatStore(
+      (state) => state.shareDocument,
+    );
+
   const markAsRead =
     useChatStore(
       (state) => state.markAsRead,
@@ -155,6 +167,15 @@ export function ChatConversationScreen() {
 
   const [content, setContent] =
     useState('');
+
+  const [isDocumentPickerVisible, setDocumentPickerVisible] =
+    useState(false);
+  const [documents, setDocuments] = useState<CaseDocument[]>([]);
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+  const [sharingDocumentId, setSharingDocumentId] =
+    useState<string | null>(null);
+  const [openingMessageId, setOpeningMessageId] =
+    useState<string | null>(null);
 
   const listRef =
     useRef<FlatList<ChatMessage>>(
@@ -275,6 +296,94 @@ export function ChatConversationScreen() {
       [messages],
     );
 
+  const openDocumentPicker = useCallback(async () => {
+    if (!conversation || conversation.status !== 'ACTIVE') {
+      return;
+    }
+
+    setDocumentPickerVisible(true);
+    setIsLoadingDocuments(true);
+
+    try {
+      const availableDocuments =
+        await caseDocumentsService.getByCase(conversation.caseId);
+
+      setDocuments(
+        availableDocuments.filter(
+          (document) => document.status !== 'DELETED',
+        ),
+      );
+    } catch (requestError) {
+      setDocumentPickerVisible(false);
+      Alert.alert(
+        'No fue posible cargar los documentos',
+        requestError instanceof Error
+          ? requestError.message
+          : 'Intenta nuevamente.',
+      );
+    } finally {
+      setIsLoadingDocuments(false);
+    }
+  }, [conversation]);
+
+  const handleShareDocument = useCallback(
+    async (document: CaseDocument) => {
+      const draft = content;
+
+      try {
+        setSharingDocumentId(document.id);
+        await shareDocument(document.id, draft || undefined);
+        setContent('');
+        setDocumentPickerVisible(false);
+      } catch (requestError) {
+        Alert.alert(
+          'No fue posible compartir el documento',
+          requestError instanceof Error
+            ? requestError.message
+            : 'Intenta nuevamente.',
+        );
+      } finally {
+        setSharingDocumentId(null);
+      }
+    },
+    [content, shareDocument],
+  );
+
+  const handleOpenDocument = useCallback(async (message: ChatMessage) => {
+    const document = message.document;
+    const latestVersion = document?.versions[0];
+
+    if (!document || !latestVersion || document.status === 'DELETED') {
+      Alert.alert(
+        'Documento no disponible',
+        'El documento fue eliminado o ya no tiene una versión disponible.',
+      );
+      return;
+    }
+
+    try {
+      setOpeningMessageId(message.id);
+      const file = await downloadProtectedFile(
+        caseDocumentsService.getDownloadPath(latestVersion.id),
+        latestVersion.originalName,
+      );
+
+      await openFileWithCompatibleApp({
+        uri: file.uri,
+        mimeType: latestVersion.mimeType,
+      });
+    } catch (requestError) {
+      Alert.alert(
+        'No fue posible abrir el archivo',
+        requestError instanceof Error
+          ? requestError.message
+          : 'El documento ya no está disponible.',
+      );
+    } finally {
+      setOpeningMessageId(null);
+    }
+  }, []);
+
   if (!conversationId) {
     return (
       <SafeAreaView
@@ -330,6 +439,63 @@ export function ChatConversationScreen() {
           >
             {item.content}
           </Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'DOCUMENT') {
+      const document = item.document;
+      const latestVersion = document?.versions[0];
+      const isDeleted = !document || document.status === 'DELETED';
+      const isOpening = openingMessageId === item.id;
+
+      return (
+        <View
+          style={[
+            styles.messageRow,
+            isMine ? styles.messageRowMine : styles.messageRowOther,
+          ]}
+        >
+          <View style={styles.documentBubble}>
+            {!isMine && (
+              <Text style={styles.senderName}>{getSenderName(item)}</Text>
+            )}
+
+            <Text style={styles.documentName}>
+              {document?.name ?? 'Documento no disponible'}
+            </Text>
+            <Text style={styles.documentDetail}>
+              {document ? documentTypeLabels[document.type] : 'Documento'}
+            </Text>
+            <Text style={styles.documentDetail}>
+              {latestVersion?.mimeType ?? 'Tipo no disponible'}
+            </Text>
+            <Text style={styles.documentStatus}>
+              Estado: {document?.status ?? 'DELETED'}
+            </Text>
+            {item.content ? (
+              <Text style={styles.documentCaption}>{item.content}</Text>
+            ) : null}
+            <Text style={styles.documentDetail}>
+              {formatMessageTime(item.createdAt)}
+            </Text>
+
+            <Pressable
+              disabled={isDeleted || !latestVersion || isOpening}
+              style={[
+                styles.openDocumentButton,
+                (isDeleted || !latestVersion || isOpening) &&
+                  styles.sendButtonDisabled,
+              ]}
+              onPress={() => void handleOpenDocument(item)}
+            >
+              {isOpening ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.openDocumentButtonText}>Abrir</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       );
     }
@@ -468,6 +634,23 @@ export function ChatConversationScreen() {
           </Pressable>
         )}
 
+        {conversation?.status === 'CLOSED' && (
+          <View
+            style={styles.closedBanner}
+            accessibilityRole="alert"
+          >
+            <Text style={styles.closedBannerText}>
+              Esta conversación está cerrada y es de solo lectura.
+            </Text>
+
+            {content.length > 0 && (
+              <Text style={styles.closedDraftText}>
+                Tu texto se conserva, pero ya no puedes enviarlo.
+              </Text>
+            )}
+          </View>
+        )}
+
         <FlatList
           ref={listRef}
           data={sortedMessages}
@@ -532,6 +715,21 @@ export function ChatConversationScreen() {
         />
 
         <View style={styles.composer}>
+          <Pressable
+            accessibilityLabel="Adjuntar documento del caso"
+            disabled={
+              isSending || conversation?.status !== 'ACTIVE'
+            }
+            style={[
+              styles.attachButton,
+              (isSending || conversation?.status !== 'ACTIVE') &&
+                styles.sendButtonDisabled,
+            ]}
+            onPress={() => void openDocumentPicker()}
+          >
+            <Text style={styles.attachButtonText}>+</Text>
+          </Pressable>
+
           <TextInput
             value={content}
             onChangeText={setContent}
@@ -584,6 +782,59 @@ export function ChatConversationScreen() {
             )}
           </Pressable>
         </View>
+
+        <Modal
+          visible={isDocumentPickerVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setDocumentPickerVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.documentPicker}>
+              <View style={styles.documentPickerHeader}>
+                <Text style={styles.documentPickerTitle}>
+                  Adjuntar documento
+                </Text>
+                <Pressable onPress={() => setDocumentPickerVisible(false)}>
+                  <Text style={styles.documentPickerClose}>Cerrar</Text>
+                </Pressable>
+              </View>
+
+              {isLoadingDocuments ? (
+                <ActivityIndicator style={styles.documentPickerLoader} />
+              ) : (
+                <FlatList
+                  data={documents}
+                  keyExtractor={(item) => item.id}
+                  ListEmptyComponent={
+                    <Text style={styles.documentPickerEmpty}>
+                      No hay documentos disponibles.
+                    </Text>
+                  }
+                  renderItem={({ item }) => (
+                    <Pressable
+                      disabled={sharingDocumentId !== null}
+                      style={styles.documentPickerItem}
+                      onPress={() => void handleShareDocument(item)}
+                    >
+                      <View style={styles.documentPickerInformation}>
+                        <Text style={styles.documentPickerName}>
+                          {item.name}
+                        </Text>
+                        <Text style={styles.documentDetail}>
+                          {documentTypeLabels[item.type]} · {item.status}
+                        </Text>
+                      </View>
+                      {sharingDocumentId === item.id && (
+                        <ActivityIndicator size="small" />
+                      )}
+                    </Pressable>
+                  )}
+                />
+              )}
+            </View>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -665,6 +916,24 @@ const styles =
       color: '#C53030',
       fontSize: 12,
     },
+    closedBanner: {
+      marginHorizontal: 12,
+      marginTop: 12,
+      padding: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: '#F6AD55',
+      backgroundColor: '#FFFAF0',
+    },
+    closedBannerText: {
+      color: '#7B341E',
+      fontWeight: '700',
+    },
+    closedDraftText: {
+      marginTop: 4,
+      color: '#9C4221',
+      fontSize: 12,
+    },
     messagesContent: {
       flexGrow: 1,
       paddingHorizontal: 12,
@@ -719,6 +988,45 @@ const styles =
     messageTimeMine: {
       color: '#CBD5E0',
     },
+    documentBubble: {
+      maxWidth: '86%',
+      padding: 13,
+      borderWidth: 1,
+      borderColor: '#90CDF4',
+      borderRadius: 14,
+      backgroundColor: '#EBF8FF',
+    },
+    documentName: {
+      color: '#1A365D',
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    documentDetail: {
+      marginTop: 4,
+      color: '#4A5568',
+      fontSize: 12,
+    },
+    documentStatus: {
+      marginTop: 6,
+      color: '#2C5282',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    documentCaption: {
+      marginTop: 8,
+      color: '#2D3748',
+    },
+    openDocumentButton: {
+      alignItems: 'center',
+      marginTop: 10,
+      paddingVertical: 8,
+      borderRadius: 8,
+      backgroundColor: '#2B6CB0',
+    },
+    openDocumentButtonText: {
+      color: '#FFFFFF',
+      fontWeight: '700',
+    },
     systemMessage: {
       alignSelf: 'center',
       marginVertical: 8,
@@ -767,6 +1075,21 @@ const styles =
       borderTopWidth: 1,
       borderTopColor: '#E2E8F0',
     },
+    attachButton: {
+      width: 42,
+      height: 42,
+      marginRight: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 21,
+      backgroundColor: '#2B6CB0',
+    },
+    attachButtonText: {
+      color: '#FFFFFF',
+      fontSize: 25,
+      lineHeight: 27,
+      fontWeight: '600',
+    },
     input: {
       flex: 1,
       minHeight: 42,
@@ -794,6 +1117,56 @@ const styles =
     },
     sendButtonText: {
       color: '#FFFFFF',
+      fontWeight: '700',
+    },
+    modalBackdrop: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    },
+    documentPicker: {
+      maxHeight: '70%',
+      padding: 18,
+      paddingBottom: 30,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      backgroundColor: '#FFFFFF',
+    },
+    documentPickerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 14,
+    },
+    documentPickerTitle: {
+      color: '#1A202C',
+      fontSize: 19,
+      fontWeight: '700',
+    },
+    documentPickerClose: {
+      color: '#2B6CB0',
+      fontWeight: '700',
+    },
+    documentPickerLoader: {
+      marginVertical: 32,
+    },
+    documentPickerEmpty: {
+      paddingVertical: 30,
+      color: '#718096',
+      textAlign: 'center',
+    },
+    documentPickerItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 13,
+      borderBottomWidth: 1,
+      borderBottomColor: '#E2E8F0',
+    },
+    documentPickerInformation: {
+      flex: 1,
+    },
+    documentPickerName: {
+      color: '#2D3748',
       fontWeight: '700',
     },
   });
